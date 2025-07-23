@@ -212,15 +212,18 @@ def load_data_to_snowflake(conn, local_data_dir, stage_name, table_name):
     cur.close()
 
 if __name__ == "__main__":
-    START_DATE = input("Enter start date (datetime): ") # "2025-05-01 10:30:00"
-    END_DATE = input("Enter end date (datetime): ") # "2025-05-01 11:31:00"
-    download_wikipedia_pageview_data(START_DATE, END_DATE)
-    SNOWFLAKE_ACCOUNT =  input("Enter Snowflake account: ") # 'NQKHNNX-NVB21540'
-    SNOWFLAKE_USER = input("Enter Snowflake user: ") # 'MARYRWELSH'
-    conn = get_snowflake_connection(getpass.getpass('Enter Snowflake password: '))
-    SNOWFLAKE_WAREHOUSE = input("Enter Snowflake warehouse: ") # 'SNOWFLAKE_LEARNING_WH'
-    SNOWFLAKE_DATABASE = input("Enter Snowflake database: ") # 'SNOWFLAKE_LEARNING_DB'
-    SNOWFLAKE_SCHEMA = input("Enter Snowflake schema: ") # 'PUBLIC'
+    # Get input values
+    start_date = input("Enter start date (datetime): ") # "2025-05-01 10:30:00"
+    end_date = input("Enter end date (datetime): ") # "2025-05-01 11:31:00"
 
+    snowflake_account =  input("Enter Snowflake account: ") # 'NQKHNNX-NVB21540'
+    snowflake_user = input("Enter Snowflake user: ") # 'MARYRWELSH'
+    conn = get_snowflake_connection(getpass.getpass('Enter Snowflake password: '))
+    snowflake_warehouse = input("Enter Snowflake warehouse: ") # 'SNOWFLAKE_LEARNING_WH'
+    snowflake_database = input("Enter Snowflake database: ") # 'SNOWFLAKE_LEARNING_DB'
+    snowflake_schema = input("Enter Snowflake schema: ") # 'PUBLIC'
+
+    # Main workflow
+    download_wikipedia_pageview_data(start_date, end_date)
     setup_snowflake_objects(conn)
-    load_data_to_snowflake(conn, LOCAL_DATA_DIR, SNOWFLAKE_STAGE_NAME, SNOWFLAKE_TABLE_NAME)
+    load_data_to_snowflake(conn, LOCAL_DATA_DIR, snowflake_stage_name, snowflake_table_name)

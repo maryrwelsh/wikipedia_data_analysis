@@ -11,11 +11,11 @@ This Python script facilitates the automated download of Wikipedia hourly pagevi
 * [Usage](#usage)
 * [Clean Code Principles Applied](#clean-code-principles-applied)
 * [Future Improvements](#future-improvements)
-* [License](#license)
 
 ## Features
 
 * **Automated Data Download:** Downloads hourly Wikipedia pageview `.gz` files for a specified date range.
+* **Parallel Processing for Downloads:** Utilizes a thread pool to download and unzip files concurrently, significantly speeding up the initial data acquisition phase.
 * **Automatic Unzipping:** Unzips downloaded `.gz` files into `.txt` format.
 * **Idempotent Operations:** Skips downloading/unzipping files that already exist locally.
 * **Snowflake Integration:**
@@ -64,6 +64,10 @@ The `.env` file is crucial for configuring the script. Populate it with your spe
 # Optional: Local directory to store downloaded pageview files
 # If not set, defaults to "wikipedia_pageviews"
 # LOCAL_DATA_DIR=my_pageviews_data
+
+# Optional: Number of parallel workers for downloading files.
+# If not set, defaults to 5. Adjust based on your network and CPU.
+# MAX_DOWNLOAD_WORKERS=5
 
 # --- Date Range for Data Download ---
 # Required: Start and End dates for data ingestion
@@ -114,7 +118,7 @@ The script will:
 
 1. Read the configuration from your environment variables (or `.env` file).
 
-2. Download and unzip the specified Wikipedia pageview data files into the `wikipedia_pageviews` directory (or your `LOCAL_DATA_DIR`).
+2. Download and unzip the specified Wikipedia pageview data files into the `wikipedia_pageviews` directory (or your `LOCAL_DATA_DIR`) in parallel.
 
 3. Connect to your Snowflake account.
 
@@ -128,7 +132,7 @@ The script will:
 
 ## Clean Code Principles Applied
 
-This refactored codebase strives to adhere to the following Clean Code principles:
+This codebase strives to adhere to the following Clean Code principles:
 
 * **Single Responsibility Principle (SRP):**
 
@@ -160,7 +164,7 @@ This refactored codebase strives to adhere to the following Clean Code principle
 
 * **Error Reporting:** Integrate with an error reporting service (e.g., Sentry, Rollbar) for production environments.
 
-* **Parallel Processing:** For larger date ranges, consider using multiprocessing or threading to download and process files concurrently.
+* **Parallel Processing for Snowflake Loading:** While downloads are parallel, explore options for parallelizing Snowflake data loading (e.g., using Snowflake's multi-cluster warehouses or more advanced `COPY INTO` options) if performance becomes a bottleneck. This would require careful management of database connections and potential contention.
 
 * **Data Quality Checks:** Implement checks for data integrity before loading into Snowflake.
 

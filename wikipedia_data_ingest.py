@@ -5,7 +5,8 @@ import getpass
 from datetime import datetime, timedelta
 import requests
 import snowflake.connector
-from dotenv import load_dotenv # Import to load .env file
+from dotenv import load_dotenv
+import concurrent.futures
 
 # Load environment variables from .env file at the very beginning
 load_dotenv()
@@ -18,6 +19,7 @@ class Config:
     BASE_URL = "https://dumps.wikimedia.org/other/pageviews"
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
     CHUNK_SIZE = 8192
+    MAX_DOWNLOAD_WORKERS = int(os.getenv('MAX_DOWNLOAD_WORKERS', 5))
 
     # Snowflake Configuration (primarily from environment variables)
     SNOWFLAKE_ACCOUNT = os.getenv('SNOWFLAKE_ACCOUNT')
@@ -139,19 +141,29 @@ class WikipediaDownloader:
             start_dt (datetime): The start datetime.
             end_dt (datetime): The end datetime.
         """
-        log.info(f"Starting download from {start_dt} to {end_dt}...")
+        log.info(f"Starting parallel download from {start_dt} to {end_dt}...")
 
-        current_date = start_dt
         # Adjust end_dt to include the full last hour for hourly processing
+        # Include any extra time between the dates, hourly
+        current_date = start_dt.replace(minute=0, second=0, microsecond=0)
+
         effective_end_dt = end_dt.replace(minute=0, second=0, microsecond=0)
         if end_dt.minute > 0 or end_dt.second > 0:
             effective_end_dt += timedelta(hours=1)
 
+        # Generate a list of all hours to process
+        hours_to_process = []
         while current_date <= effective_end_dt:
-            self.process_hour_data(current_date) # Process each hour
+            hours_to_process.append(current_date)
             current_date += timedelta(hours=1)
 
-        log.info("Download process completed.")
+        # Use ThreadPoolExecutor for parallel processing of download and unzip
+        with concurrent.futures.ThreadPoolExecutor(max_workers=Config.MAX_DOWNLOAD_WORKERS) as executor:
+            # Map the process_hour_data method to each hour
+            # The results (True/False for success) are collected, though not explicitly used here beyond logging
+            list(executor.map(self.process_hour_data, hours_to_process))
+
+        log.info("Parallel download process completed.")
 
 # --- Snowflake Module ---
 class SnowflakeLoader:

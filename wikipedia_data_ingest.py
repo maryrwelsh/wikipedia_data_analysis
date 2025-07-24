@@ -1,229 +1,366 @@
-"""Ingests Wikipedia page view .csv files for the given time period and loads the data into Snowflake"""
-
 import os
 import gzip
-from datetime import datetime, timedelta
 import logging
 import getpass
+from datetime import datetime, timedelta
 import requests
 import snowflake.connector
+from dotenv import load_dotenv # Import to load .env file
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log = logging.getLogger(__name__)
+# Load environment variables from .env file at the very beginning
+load_dotenv()
 
-LOCAL_DATA_DIR = "wikipedia_pageviews"
-BASE_URL = "https://dumps.wikimedia.org/other/pageviews"
+# --- Configuration ---
+class Config:
+    """Configuration settings for the Wikipedia Pageview Ingestion."""
+    # Local paths and static configurations
+    LOCAL_DATA_DIR = os.getenv('LOCAL_DATA_DIR', "wikipedia_pageviews") # Can be overridden by env var
+    BASE_URL = "https://dumps.wikimedia.org/other/pageviews"
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    CHUNK_SIZE = 8192
 
-# --- Data Loading Configuration ---
-SNOWFLAKE_STAGE_NAME = 'WIKIPEDIA_PAGEVIEWS_STAGE' # Name for the internal stage in Snowflake
-SNOWFLAKE_TABLE_NAME = 'WIKIPEDIA_PAGEVIEWS_RAW' # Name for the target table in Snowflake
+    # Snowflake Configuration (primarily from environment variables)
+    SNOWFLAKE_ACCOUNT = os.getenv('SNOWFLAKE_ACCOUNT')
+    SNOWFLAKE_USER = os.getenv('SNOWFLAKE_USER')
+    SNOWFLAKE_PASSWORD = os.getenv('SNOWFLAKE_PASSWORD')
+    SNOWFLAKE_WAREHOUSE = os.getenv('SNOWFLAKE_WAREHOUSE')
+    SNOWFLAKE_DATABASE = os.getenv('SNOWFLAKE_DATABASE')
+    SNOWFLAKE_SCHEMA = os.getenv('SNOWFLAKE_SCHEMA')
+    SNOWFLAKE_STAGE_NAME = os.getenv('SNOWFLAKE_STAGE_NAME', 'WIKIPEDIA_PAGEVIEWS_STAGE') # Default if not set
+    SNOWFLAKE_TABLE_NAME = os.getenv('SNOWFLAKE_TABLE_NAME', 'WIKIPEDIA_PAGEVIEWS_RAW') # Default if not set
 
-def download_wikipedia_pageview_data(start_date, end_date, output_dir="wikipedia_pageviews"):
-    """
-    Downloads Wikipedia pageview data for a specified date range.
+    # Date Range Configuration (from environment variables)
+    START_DATE_STR = os.getenv('START_DATE')
+    END_DATE_STR = os.getenv('END_DATE')
 
-    Args:
-        start_date (datetime): The start date in 'YYYY-MM-DD HH:MM:SS' format.
-        end_date (datetime): The end date in 'YYYY-MM-DD HH:MM:SS' format.
-        output_dir (str): The directory to save the downloaded files.
-    """
+# --- Logging Setup ---
+def setup_logging():
+    """Configures the logging for the application."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    return logging.getLogger(__name__)
 
-    date_format = "%Y-%m-%d %H:%M:%S"
+log = setup_logging()
 
-    # Convert the string to a datetime object
-    start_date = datetime.strptime(start_date, date_format)
-    end_date = datetime.strptime(end_date, date_format)
+# --- Data Download Module ---
+class WikipediaDownloader:
+    """Handles the downloading and unzipping of Wikipedia pageview data."""
 
-    # Create the output directory if it doesn't exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    def __init__(self, base_url, output_dir):
+        self.base_url = base_url
+        self.output_dir = output_dir
+        self._ensure_output_directory_exists()
 
-    current_date = start_date
-    end_dt = end_date
-    # Include any extra time between the dates, hourly
-    if (end_dt - current_date).total_seconds()/60 > 0:
-        end_dt += timedelta(hours=1)
+    def _ensure_output_directory_exists(self):
+        """Ensures the local output directory for downloads exists."""
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+            log.info(f"Created output directory: {self.output_dir}")
 
-    log.info(f"Starting download from {start_date} to {end_date}...")
-
-    while current_date <= end_dt:
+    def _get_file_metadata(self, current_date):
+        """Constructs and returns file metadata (URL, paths, names) for a given date and hour."""
         year = current_date.year
         month = current_date.strftime('%m')
-        dt = current_date.strftime('%Y%m%d')
-        hour = current_date.strftime('%H')
+        dt_str = current_date.strftime('%Y%m%d')
+        hour_str = current_date.strftime('%H')
 
-        # Wikipedia pageview data is hourly.
-        file_name = f"pageviews-{dt}-{hour}0000.gz"
-        url = f"{BASE_URL}/{year}/{year}-{month}/{file_name}"
-        output_path_gz = os.path.join(output_dir, file_name)
-        output_path_txt = os.path.join(output_dir, file_name.replace('.gz', '.txt'))
+        file_name_gz = f"pageviews-{dt_str}-{hour_str}0000.gz"
+        file_name_txt = file_name_gz.replace('.gz', '.txt')
+        url = f"{self.base_url}/{year}/{year}-{month}/{file_name_gz}"
+        output_path_gz = os.path.join(self.output_dir, file_name_gz)
+        output_path_txt = os.path.join(self.output_dir, file_name_txt)
+        return url, output_path_gz, output_path_txt, file_name_gz, file_name_txt
+
+    def _is_already_processed(self, output_path_txt, file_name_txt):
+        """Checks if the unzipped file already exists."""
         if os.path.exists(output_path_txt):
-            log.info(f"Skipping {file_name}, already downloaded and unzipped.")
-            current_date += timedelta(hours=1)
-            continue
-        elif os.path.exists(output_path_gz):
-            log.info(f"Skipping {file_name}, already downloaded.")
-            current_date += timedelta(hours=1)
-            continue
-        else:
-            try:
-                log.info(f"Downloading {file_name}...")
-                response = requests.get(url, stream=True)
-                response.raise_for_status() # Raise an exception for HTTP errors
-                with open(output_path_gz, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                log.info(f"Successfully downloaded {file_name}")
-            except requests.exceptions.RequestException as e:
-                log.info(f"Error downloading {file_name}: {e}")
-                # You might want to log this error and continue or break
-                continue # Continue to next hour/day if one file fails
-        # Unzip the file
+            log.info(f"Skipping {file_name_txt}, already downloaded and unzipped.")
+            return True
+        return False
+
+    def _is_gz_downloaded(self, output_path_gz, file_name_gz):
+        """Checks if the gzipped file already exists."""
+        if os.path.exists(output_path_gz):
+            log.info(f"Skipping download of {file_name_gz}, already downloaded. Proceeding to unzip.")
+            return True
+        return False
+
+    def _download_file(self, url, output_path_gz, file_name_gz):
+        """Attempts to download a single gzipped file."""
+        log.info(f"Downloading {file_name_gz}...")
         try:
-            log.info(f"Unzipping {file_name}...")
+            response = requests.get(url, stream=True)
+            response.raise_for_status() # Raise an exception for HTTP errors
+            with open(output_path_gz, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=Config.CHUNK_SIZE):
+                    f.write(chunk)
+            log.info(f"Successfully downloaded {file_name_gz}")
+            return True
+        except requests.exceptions.RequestException as e:
+            log.error(f"Error downloading {file_name_gz}: {e}")
+            return False
+
+    def _unzip_file(self, output_path_gz, output_path_txt, file_name_gz, file_name_txt):
+        """Attempts to unzip a single gzipped file."""
+        log.info(f"Unzipping {file_name_gz}...")
+        try:
             with gzip.open(output_path_gz, 'rb') as f_in:
                 with open(output_path_txt, 'wb') as f_out:
                     f_out.write(f_in.read())
-            log.info(f"Successfully unzipped {file_name} to {file_name.replace('.gz', '.txt')}")
+            log.info(f"Successfully unzipped {file_name_gz} to {file_name_txt}")
             # Optionally remove the .gz file after unzipping to save space
             # os.remove(output_path_gz)
+            return True
         except Exception as e:
-            log.info(f"Error unzipping {file_name}: {e}")
-        current_date += timedelta(hours=1)
+            log.error(f"Error unzipping {file_name_gz}: {e}")
+            return False
 
-    log.info("Download process completed.")
+    def process_hour_data(self, current_date):
+        """Downloads and unzips an hourly Wikipedia pageview data file, if not already present."""
+        url, output_path_gz, output_path_txt, file_name_gz, file_name_txt = \
+            self._get_file_metadata(current_date)
 
-def get_snowflake_connection(pw):
-    """
-    Establishes and returns a connection to Snowflake.
-    Args:
-        pw (str): The password given after the prompt.
-    """
-    try:
-        conn = snowflake.connector.connect(
-            user=SNOWFLAKE_USER,
-            password=pw,
-            account=SNOWFLAKE_ACCOUNT,
-            warehouse=SNOWFLAKE_WAREHOUSE,
-            database=SNOWFLAKE_DATABASE,
-            schema=SNOWFLAKE_SCHEMA
-        )
-        log.info("Successfully connected to Snowflake!")
-        return conn
-    except Exception as e:
-        log.info(f"Error connecting to Snowflake: {e}")
-        return None
+        if self._is_already_processed(output_path_txt, file_name_txt):
+            return True
 
-def setup_snowflake_objects(conn):
-    """
-    Creates the necessary stage and table in Snowflake if they don't exist.
-    """
-    cur = conn.cursor()
-    try:
-        # Create Stage
-        log.info(f"Ensuring stage '{SNOWFLAKE_STAGE_NAME}' exists...")
-        cur.execute(f"CREATE STAGE IF NOT EXISTS {SNOWFLAKE_STAGE_NAME}")
-        log.info(f"Stage '{SNOWFLAKE_STAGE_NAME}' is ready.")
+        if not self._is_gz_downloaded(output_path_gz, file_name_gz):
+            if not self._download_file(url, output_path_gz, file_name_gz):
+                return False # Failed to download
 
-        # Create Table
-        log.info(f"Ensuring table '{SNOWFLAKE_TABLE_NAME}' exists...")
-        # Schema matches: project_code page_title view_count byte_size
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {SNOWFLAKE_TABLE_NAME} (
-                PROJECT_CODE VARCHAR,
-                PAGE_TITLE VARCHAR,
-                VIEW_COUNT NUMBER,
-                BYTE_SIZE NUMBER,
-                FILE_NAME VARCHAR, -- To track which file the data came from
-                LOAD_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+        return self._unzip_file(output_path_gz, output_path_txt, file_name_gz, file_name_txt)
+
+    def download_data_for_range(self, start_dt, end_dt):
+        """
+        Downloads Wikipedia pageview data for a specified date and time range.
+
+        Args:
+            start_dt (datetime): The start datetime.
+            end_dt (datetime): The end datetime.
+        """
+        log.info(f"Starting download from {start_dt} to {end_dt}...")
+
+        current_date = start_dt
+        # Adjust end_dt to include the full last hour for hourly processing
+        effective_end_dt = end_dt.replace(minute=0, second=0, microsecond=0)
+        if end_dt.minute > 0 or end_dt.second > 0:
+            effective_end_dt += timedelta(hours=1)
+
+        while current_date <= effective_end_dt:
+            self.process_hour_data(current_date) # Process each hour
+            current_date += timedelta(hours=1)
+
+        log.info("Download process completed.")
+
+# --- Snowflake Module ---
+class SnowflakeLoader:
+    """Handles connection, setup, and data loading to Snowflake."""
+
+    def __init__(self, account, user, password, warehouse, database, schema):
+        # Validate that all required connection parameters are provided
+        required_params = {
+            "account": account,
+            "user": user,
+            "password": password,
+            "warehouse": warehouse,
+            "database": database,
+            "schema": schema
+        }
+        for param, value in required_params.items():
+            if not value:
+                raise ValueError(f"Missing required Snowflake connection parameter: {param}. "
+                                 f"Please ensure '{param.upper()}' environment variable is set.")
+
+        self.connection_params = required_params
+        self.conn = None
+
+    def connect(self):
+        """Establishes a connection to Snowflake."""
+        try:
+            self.conn = snowflake.connector.connect(**self.connection_params)
+            log.info("Successfully connected to Snowflake!")
+            return True
+        except Exception as e:
+            log.error(f"Error connecting to Snowflake: {e}")
+            self.conn = None
+            return False
+
+    def close_connection(self):
+        """Closes the Snowflake connection."""
+        if self.conn:
+            self.conn.close()
+            log.info("Snowflake connection closed.")
+
+    def _execute_sql(self, cursor, sql_command, error_msg):
+        """Helper to execute a single SQL command with error handling."""
+        try:
+            cursor.execute(sql_command)
+            return True
+        except Exception as e:
+            log.error(f"{error_msg}: {e}")
+            return False
+
+    def setup_snowflake_objects(self, stage_name, table_name):
+        """
+        Creates the necessary stage and table in Snowflake if they don't exist.
+        """
+        if not self.conn:
+            log.error("No Snowflake connection available. Cannot set up objects.")
+            return False
+
+        cur = self.conn.cursor()
+        try:
+            log.info(f"Ensuring stage '{stage_name}' exists...")
+            if not self._execute_sql(cur, f"CREATE STAGE IF NOT EXISTS {stage_name}",
+                                     f"Error creating stage '{stage_name}'"):
+                return False
+            log.info(f"Stage '{stage_name}' is ready.")
+
+            log.info(f"Ensuring table '{table_name}' exists...")
+            table_sql = f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    PROJECT_CODE VARCHAR,
+                    PAGE_TITLE VARCHAR,
+                    VIEW_COUNT NUMBER,
+                    BYTE_SIZE NUMBER,
+                    FILE_NAME VARCHAR,
+                    LOAD_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+                )
+            """
+            if not self._execute_sql(cur, table_sql, f"Error creating table '{table_name}'"):
+                return False
+            log.info(f"Table '{table_name}' is ready.")
+            return True
+        finally:
+            cur.close()
+
+    def _upload_file_to_stage(self, cursor, local_path, file_name, stage_name):
+        """Uploads a single file to the Snowflake internal stage."""
+        log.info(f"Uploading '{file_name}' to stage '{stage_name}'...")
+        sql_command = f"PUT file://{local_path} @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        if self._execute_sql(cursor, sql_command, f"Error uploading '{file_name}' to stage"):
+            log.info(f"Successfully uploaded '{file_name}'.")
+            return True
+        return False
+
+    def _copy_data_into_table(self, cursor, file_name, stage_name, table_name):
+        """Copies data from a staged file into the target table."""
+        log.info(f"Copying data from '{file_name}' (in stage) into table '{table_name}'...")
+        copy_sql = f"""
+            COPY INTO {table_name} (PROJECT_CODE, PAGE_TITLE, VIEW_COUNT, BYTE_SIZE, FILE_NAME)
+            FROM (SELECT $1, $2, $3, $4, '{file_name}' FROM @{stage_name}/{file_name})
+            FILE_FORMAT = (
+                TYPE = CSV
+                FIELD_DELIMITER = ' '
+                SKIP_HEADER = 0
+                ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE
+                NULL_IF = ('')
+                EMPTY_FIELD_AS_NULL = TRUE
             )
-        """)
-        log.info(f"Table '{SNOWFLAKE_TABLE_NAME}' is ready.")
-    except Exception as e:
-        log.info(f"Error setting up Snowflake objects: {e}")
-        raise # Re-raise to stop execution if setup fails
-    finally:
-        cur.close()
+            ON_ERROR = 'CONTINUE'
+        """
+        if self._execute_sql(cursor, copy_sql, f"Error copying data from '{file_name}' to table"):
+            log.info(f"Successfully copied data from '{file_name}' to '{table_name}'.")
+            # Optional: Remove file from stage after successful load
+            # self._execute_sql(cursor, f"REMOVE @{stage_name}/{file_name}", f"Error removing '{file_name}' from stage")
+            return True
+        return False
 
-def load_data_to_snowflake(conn, local_data_dir, stage_name, table_name):
-    """
-    Uploads .txt files to a Snowflake stage and loads them into a table.
-    """
-    cur = conn.cursor()
+    def load_data_from_local_to_snowflake(self, local_data_dir, stage_name, table_name):
+        """
+        Uploads .txt files from a local directory to a Snowflake stage and loads them into a table.
+        """
+        if not self.conn:
+            log.error("No Snowflake connection available. Cannot load data.")
+            return
 
-    # Get list of .txt files to process
-    txt_files = [f for f in os.listdir(local_data_dir) if f.endswith('.txt')]
-    if not txt_files:
-        log.info(f"No .txt files found in '{local_data_dir}'. Please ensure data is downloaded and unzipped.")
+        txt_files = [f for f in os.listdir(local_data_dir) if f.endswith('.txt')]
+        if not txt_files:
+            log.info(f"No .txt files found in '{local_data_dir}'. Please ensure data is downloaded and unzipped.")
+            return
+
+        log.info(f"Found {len(txt_files)} .txt files to process for Snowflake loading.")
+        cur = self.conn.cursor()
+        try:
+            for file_name in sorted(txt_files):
+                local_file_path = os.path.join(local_data_dir, file_name)
+
+                if not self._upload_file_to_stage(cur, local_file_path, file_name, stage_name):
+                    continue # Skip to the next file if upload fails
+
+                self._copy_data_into_table(cur, file_name, stage_name, table_name)
+        finally:
+            cur.close()
+        log.info("\nData loading process completed.")
+
+
+# --- Main Application Logic ---
+def get_date_range_from_config():
+    """Parses start and end dates from Config based on environment variables."""
+    start_date_str = Config.START_DATE_STR
+    end_date_str = Config.END_DATE_STR
+
+    if not start_date_str or not end_date_str:
+        raise ValueError(
+            "START_DATE and END_DATE environment variables must be set. "
+            "Example: START_DATE='2025-05-01 10:00:00' END_DATE='2025-05-01 11:00:00'"
+        )
+
+    try:
+        start_dt = datetime.strptime(start_date_str, Config.DATE_FORMAT)
+        end_dt = datetime.strptime(end_date_str, Config.DATE_FORMAT)
+        return start_dt, end_dt
+    except ValueError as e:
+        raise ValueError(f"Invalid date format in environment variables. Please use YYYY-MM-DD HH:MM:SS. Error: {e}")
+
+def run_ingestion_workflow():
+    """Orchestrates the entire data ingestion workflow."""
+
+    # 1. Get configuration from environment variables
+    try:
+        start_dt, end_dt = get_date_range_from_config()
+    except ValueError as e:
+        log.error(f"Configuration error for date range: {e}")
         return
 
-    log.info(f"Found {len(txt_files)} .txt files to process.")
+    # Prepare Snowflake credentials from Config (which reads env vars)
+    sf_creds = {
+        "account": Config.SNOWFLAKE_ACCOUNT,
+        "user": Config.SNOWFLAKE_USER,
+        "password": Config.SNOWFLAKE_PASSWORD,
+        "warehouse": Config.SNOWFLAKE_WAREHOUSE,
+        "database": Config.SNOWFLAKE_DATABASE,
+        "schema": Config.SNOWFLAKE_SCHEMA
+    }
 
-    for file_name in sorted(txt_files): # Sort to process in a consistent order
-        local_file_path = os.path.join(local_data_dir, file_name)
+    # 2. Download data
+    downloader = WikipediaDownloader(Config.BASE_URL, Config.LOCAL_DATA_DIR)
+    downloader.download_data_for_range(start_dt, end_dt)
 
-        # 1. Upload file to Snowflake internal stage
-        log.info(f"\nUploading '{file_name}' to stage '{stage_name}'...")
-        try:
-            # PUT command to upload file from local to stage
-            cur.execute(f"PUT file://{local_file_path} @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
-            log.info(f"Successfully uploaded '{file_name}'.")
-        except Exception as e:
-            log.error(f"Error uploading '{file_name}' to stage: {e}")
-            continue # Skip to the next file if upload fails
+    # 3. Load data to Snowflake
+    try:
+        snowflake_loader = SnowflakeLoader(**sf_creds)
+    except ValueError as e:
+        log.error(f"Snowflake initialization error: {e}")
+        return
 
-        # 2. Copy data from stage into the table
-        log.info(f"Copying data from '{file_name}' (in stage) into table '{table_name}'...")
-        try:
-            # COPY INTO command
-            # FILE_FORMAT: Defines how Snowflake should interpret the file.
-            #   TYPE = CSV (even for TSV, as CSV can handle custom delimiters)
-            #   FIELD_DELIMITER = '\t' (tab-separated)
-            #   SKIP_HEADER = 0 (no header row)
-            #   ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE (more robust if some lines are malformed)
-            #   ON_ERROR = 'CONTINUE' (continue loading even if some rows fail, log errors)
-            #   TRUNCATECOLUMNS = TRUE (truncate strings that are too long for VARCHAR columns)
-            #   VALIDATION_MODE = RETURN_ERRORS (for debugging if issues arise)
-            cur.execute(f"""
-                COPY INTO {table_name} (PROJECT_CODE, PAGE_TITLE, VIEW_COUNT, BYTE_SIZE, FILE_NAME)
-                FROM (SELECT $1, $2, $3, $4, '{file_name}' FROM @{stage_name}/{file_name})
-                FILE_FORMAT = (
-                    TYPE = CSV
-                    FIELD_DELIMITER = ' '
-                    SKIP_HEADER = 0
-                    ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE
-                    NULL_IF = ('')
-                    EMPTY_FIELD_AS_NULL = TRUE
-                )
-                ON_ERROR = 'CONTINUE'
-            """)
-            log.info(f"Successfully copied data from '{file_name}' to '{table_name}'.")
+    if not snowflake_loader.connect():
+        log.error("Failed to connect to Snowflake. Aborting data load.")
+        return
 
-            # Optional: Remove the file from the stage after successful load
-            # print(f"Removing '{file_name}' from stage '{stage_name}'...")
-            # cur.execute(f"REMOVE @{stage_name}/{file_name}")
-            # print(f"Removed '{file_name}' from stage.")
+    try:
+        if not snowflake_loader.setup_snowflake_objects(Config.SNOWFLAKE_STAGE_NAME, Config.SNOWFLAKE_TABLE_NAME):
+            log.error("Failed to set up Snowflake objects. Aborting data load.")
+            return
 
-        except Exception as e:
-            log.error(f"Error copying data from '{file_name}' to table: {e}")
-            continue # Skip to the next file if copy fails
-
-    log.info("\nData loading process completed.")
-    cur.close()
+        snowflake_loader.load_data_from_local_to_snowflake(
+            Config.LOCAL_DATA_DIR,
+            Config.SNOWFLAKE_STAGE_NAME,
+            Config.SNOWFLAKE_TABLE_NAME
+        )
+    finally:
+        snowflake_loader.close_connection()
 
 if __name__ == "__main__":
-    # Get input values
-    start_date = input("Enter start date (datetime): ") # "2025-05-01 10:30:00"
-    end_date = input("Enter end date (datetime): ") # "2025-05-01 11:31:00"
-
-    snowflake_account =  input("Enter Snowflake account: ") # 'NQKHNNX-NVB21540'
-    snowflake_user = input("Enter Snowflake user: ") # 'MARYRWELSH'
-    conn = get_snowflake_connection(getpass.getpass('Enter Snowflake password: '))
-    snowflake_warehouse = input("Enter Snowflake warehouse: ") # 'SNOWFLAKE_LEARNING_WH'
-    snowflake_database = input("Enter Snowflake database: ") # 'SNOWFLAKE_LEARNING_DB'
-    snowflake_schema = input("Enter Snowflake schema: ") # 'PUBLIC'
-
-    # Main workflow
-    download_wikipedia_pageview_data(start_date, end_date)
-    setup_snowflake_objects(conn)
-    load_data_to_snowflake(conn, LOCAL_DATA_DIR, snowflake_stage_name, snowflake_table_name)
+    run_ingestion_workflow()

@@ -15,7 +15,7 @@ load_dotenv()
 class Config:
     """Configuration settings for the Wikipedia Pageview Ingestion."""
     # Local paths and static configurations
-    LOCAL_DATA_DIR = os.getenv('LOCAL_DATA_DIR', "wikipedia_pageviews") # Can be overridden by env var
+    LOCAL_DATA_DIR = os.getenv('LOCAL_DATA_DIR', "wikipedia_pageviews_files") # Can be overridden by env var
     BASE_URL = "https://dumps.wikimedia.org/other/pageviews"
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
     CHUNK_SIZE = 8192

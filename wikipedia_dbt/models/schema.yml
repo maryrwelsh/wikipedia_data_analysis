@@ -1,0 +1,32 @@
+
+version: 2
+
+models:
+  - name: wikipedia_pageviews
+    description: "Final table for Wikipedia page view data"
+    columns:
+      - name: id
+        description: "The surrogate pk for the wikipedia_pageviews table"
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: pageview_date_hour
+        description: "The date and hour for the page views"
+        data_type: datetime
+        data_tests:
+          - not_null
+      - name: pageview_source
+        description: "The project_code aka the source of the page view e.g. mobile, desktop, etc"
+        data_type: varchar
+      - name: page_title
+        description: "The exact title of the Wikipedia page that was viewed"
+        data_type: varchar
+      - name: page_category
+        description: "The category of the page_title generated using Snowflake's Cortex AI"
+        data_type: varchar
+      - name: view_count
+        description: "The number of times the specific page was viewed during that particular hour"
+        data_type: int
+      - name: byte_size
+        description: "The approximate size of the page in bytes"

@@ -6,7 +6,7 @@
         , SPLIT_PART(PROJECT_CODE, '.', 2) AS pageview_source
         , SPLIT_PART(PROJECT_CODE, '.', 0) AS page_language
         , PAGE_TITLE
-        , CLASSIFY_WIKIPEDIA_PAGE(PAGE_TITLE) AS PAGE_CATEGORY -- Categorize the PAGE_TITLE using Snowflake's Cortex AI
+        , SPLIT_PART(CLASSIFY_WIKIPEDIA_PAGE(PAGE_TITLE), '\n', 0) AS PAGE_CATEGORY -- Categorize the PAGE_TITLE using Snowflake's Cortex AI and trim any trailing explanation
         , VIEW_COUNT
         , BYTE_SIZE
     FROM snowflake_learning_db.public.wikipedia_pageviews_raw -- Use the table that was created in the ingest script

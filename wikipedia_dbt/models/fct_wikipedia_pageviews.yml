@@ -1,0 +1,23 @@
+
+version: 2
+
+models:
+  - name: fct_wikipedia_pageviews
+    description: "Fact table for Wikipedia page view data"
+    columns:
+      - name: pageview_date_id
+        description: "The date id for the page views - joins to the dim_date table on DATE_DAY"
+        data_type: date
+        data_tests:
+          - not_null
+      - name: pageview_hour_id
+        description: "The hour id for the page views - joins to the dim_hour table on HOUR_ID"
+        data_type: date
+      - name: dim_wikipedia_page_id
+        description: "The fk to the dim_wikipedia_page table"
+        data_type: varchar
+      - name: view_count
+        description: "The number of times the specific page was viewed during that particular hour"
+        data_type: int
+      - name: byte_size
+        description: "The approximate size of the page in bytes"

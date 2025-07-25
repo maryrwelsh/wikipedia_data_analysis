@@ -23,7 +23,7 @@ This dbt project takes raw Wikipedia pageview data (expected in a table named `W
 ## Features
 
 * **Data Cleaning & Standardization:** Processes raw pageview data, handling parsing, and ensuring consistent data types.
-* **AI-Powered Categorization:** Utilizes Snowflake Cortex's `SNOWFLAKE.ML.COMPLETE` function to dynamically categorize Wikipedia page titles into predefined topics (e.g., Technology, History, Sports).
+* **AI-Powered Categorization:** Utilizes Snowflake Cortex's `SNOWFLAKE.CORTEX.COMPLETE` function to dynamically categorize Wikipedia page titles into predefined topics (e.g., Technology, History, Sports).
 * **Idempotent UDF Creation:** The Cortex categorization User-Defined Function (UDF) is automatically created/updated at the start of each dbt run, ensuring its availability.
 * **Trending Topic Analysis:** Provides analytical models to aggregate pageviews by category, enabling the identification of trending topics.
 * **Modular & Testable:** Follows dbt best practices for modularity, reusability, and testability.
@@ -84,10 +84,6 @@ SNOWFLAKE_DATABASE="YOUR_SNOWFLAKE_DATABASE"
 SNOWFLAKE_SCHEMA="YOUR_SNOWFLAKE_SCHEMA"
 # Optional: If you use a specific role for dbt
 # SNOWFLAKE_ROLE="YOUR_DBT_ROLE"
-
-# --- Other dbt project specific variables (if any) ---
-# Example: Define a variable for the categorization model's unique key if needed
-# DBT_CATEGORIZED_PAGES_UNIQUE_KEY=PAGE_TITLE
 ```
 **Important Security Note:** For production environments, it is strongly recommended to use a dedicated secrets management service (e.g., AWS Secrets Manager, Azure Key Vault, Google Secret Manager) instead of `.env` files for sensitive credentials.
 
@@ -107,32 +103,9 @@ CREATE TABLE WIKIPEDIA_PAGEVIEWS_RAW (
 ```
 (This table is expected to be populated by an external ingestion process, like the Python script mentioned in the overall solution.)*
 
-This dbt project will automatically create the `CLASSIFY_WIKIPEDIA_PAGE` UDF using Snowflake Cortex and the `WIKIPEDIA_PAGEVIEWS_CATEGORIZED` table (as an incremental model).
+This dbt project will automatically create the `CLASSIFY_WIKIPEDIA_PAGE` UDF using Snowflake Cortex.
 
-## Project Structure
 
-A typical dbt project structure for this scenario would look like this:
-```ini
-your_dbt_project/
-├── models/
-│   ├── staging/
-│   │   └── stg_wikipedia_pageviews.sql             # Cleans and standardizes raw data
-│   ├── intermediate/
-│   │   └── int_unique_page_titles.sql            # Selects unique page titles for categorization
-│   ├── marts/
-│   │   ├── dim_wikipedia_page_categories.sql     # Incremental model for AI categorization
-│   │   └── fct_hourly_pageviews_categorized.sql  # Combines pageviews with categories
-│   └── analytics/
-│       └── trending_topics_by_category.sql       # Aggregates for trending analysis
-├── macros/
-│   └── create_cortex_udf.sql                     # SQL to create the Snowflake Cortex UDF
-├── seeds/                                        # Optional: for static lookup tables
-├── tests/                                        # Data tests
-├── snapshots/                                    # Optional: for slowly changing dimensions
-├── analyses/                                     # Ad-hoc analysis queries
-├── dbt_project.yml                               # Main dbt project configuration
-└── README.md                                     # This file
-```
 ## Models
 
 Here's a brief description of the key dbt models:
@@ -141,39 +114,33 @@ Here's a brief description of the key dbt models:
 
   * **Purpose:** Acts as a staging layer for the raw `WIKIPEDIA_PAGEVIEWS_RAW` table.
 
-  * **Transformation:** Performs basic cleaning, type casting, and selects necessary columns. It might also extract the device type (e.g., 'mobile', 'desktop') from the `PROJECT_CODE` if needed.
+  * **Transformation:** Performs basic cleaning, type casting, and selects necessary columns. It also extracts the device type (e.g., 'mobile', 'desktop') from the `PROJECT_CODE` as well as utilizes the Snowflake Cortex AI to categorize the page titles.
 
-  * **Materialization:** `view`
+* **`dim_wikipedia_page.sql`**:
 
-* **`dim_wikipedia_page_categories.sql`**:
+  * **Purpose:** Stores unique Wikipedia page view sources, page titles, and their AI-generated categories.
 
-  * **Purpose:** Stores unique Wikipedia page titles and their AI-generated categories.
-
-  * **Transformation:** Selects distinct `PAGE_TITLE` from the staging layer and applies the `CLASSIFY_WIKIPEDIA_PAGE` Cortex UDF to categorize them.
-
-  * **Materialization:** `incremental` (using `PAGE_TITLE` as `unique_key`) to only process new pages, optimizing Cortex usage.
+  * **Transformation:** Selects distinct `PAGEVIEW_SOURCE` and `PAGE_TITLE` from the staging layer and applies the `CLASSIFY_WIKIPEDIA_PAGE` Cortex UDF to categorize them.
 
   * **Dependencies:** `stg_wikipedia_pageviews`
 
-* **`fct_hourly_pageviews_categorized.sql`**:
+* **`fct_wikipedia_pageviews.sql`**:
 
   * **Purpose:** Combines hourly pageview data with the AI-generated categories.
 
-  * **Transformation:** Joins `stg_wikipedia_pageviews` with `dim_wikipedia_page_categories` on `PAGE_TITLE`.
+  * **Transformation:** Includes fact data as well as the surrogate key for `dim_wikipedia_page`.
 
-  * **Materialization:** `table` or `incremental` (depending on volume and refresh strategy).
+  * **Dependencies:** `stg_wikipedia_pageviews`
 
-  * **Dependencies:** `stg_wikipedia_pageviews`, `dim_wikipedia_page_categories`
-
-* **`trending_topics_by_category.sql`**:
+* **`wikipedia_pageviews.sql`**:
 
   * **Purpose:** Provides an aggregated view of trending topics based on pageview counts per category.
 
-  * **Transformation:** Aggregates `fct_hourly_pageviews_categorized` by `CATEGORY` and time window (e.g., last 24 hours).
+  * **Transformation:** Aggregates `fct_wikipedia_pageviews` with the `dim_date`, `dim_hour`, and `dim_wikipedia_page` dimensions.
 
   * **Materialization:** `view`
 
-  * **Dependencies:** `fct_hourly_pageviews_categorized`
+  * **Dependencies:** `fct_hourly_pageviews_categorized`, `dim_date`, `dim_hour`, and `dim_wikipedia_page`
 
 ## Usage
 
@@ -199,7 +166,7 @@ Here's a brief description of the key dbt models:
     dbt test
     ```
 
-After a successful `dbt run`, you can query the generated tables/views in your Snowflake database (e.g., `YOUR_DATABASE.YOUR_SCHEMA.TRENDING_TOPICS_BY_CATEGORY`) to explore the categorized and trending Wikipedia data.
+After a successful `dbt run`, you can query the generated tables/views in your Snowflake database (e.g., `YOUR_DATABASE.YOUR_SCHEMA.WIKIPEDIA_PAGEVIEWS`) to explore the categorized and trending Wikipedia data.
 
 ## Clean Code Principles Applied (dbt)
 

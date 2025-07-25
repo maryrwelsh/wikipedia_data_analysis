@@ -1,6 +1,6 @@
 {{ config(materialized='table') }}
 
-SELECT
+SELECT DISTINCT
 {{ dbt_utils.generate_surrogate_key(
     ['pageview_source',
     'PAGE_TITLE',

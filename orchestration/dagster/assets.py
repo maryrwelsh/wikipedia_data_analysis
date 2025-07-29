@@ -7,7 +7,7 @@ from data_ingest.wikipedia_data_ingest import run_ingestion_workflow
 @asset(compute_kind="python")
 def raw_wikipedia_pageviews(context: AssetExecutionContext) -> None:
     """Ingest raw Wikipedia pageview data from Wikimedia dumps."""
-    # Get date range from run config, or default to last hour
+    # Get date range from run config, or default based on execution context
     run_config = context.run.run_config or {}
     ops_config = run_config.get("ops", {}).get("raw_wikipedia_pageviews", {}).get("config", {})
     
@@ -16,15 +16,26 @@ def raw_wikipedia_pageviews(context: AssetExecutionContext) -> None:
         end_date = ops_config["end_date"]
         context.log.info(f"Using provided date range: {start_date} to {end_date}")
     else:
-        # Default: get the last complete hour of data
         now = datetime.utcnow()
-        # Round down to the previous hour
-        end_hour = now.replace(minute=0, second=0, microsecond=0)
-        start_hour = end_hour - timedelta(hours=1)
+        
+        # Check if this is a scheduled run (has specific tags) vs manual run
+        run_tags = context.run.tags or {}
+        is_scheduled_run = "schedule_type" in run_tags and run_tags["schedule_type"] == "hourly_wikipedia"
+        
+        if is_scheduled_run:
+            # Scheduled run: process the previous complete hour
+            end_hour = now.replace(minute=0, second=0, microsecond=0)
+            start_hour = end_hour - timedelta(hours=1)
+            context.log.info(f"Scheduled run: processing previous hour {start_hour} to {end_hour}")
+        else:
+            # Manual run: process the current hour (may be incomplete)
+            start_hour = now.replace(minute=0, second=0, microsecond=0)
+            end_hour = start_hour + timedelta(hours=1)
+            context.log.info(f"Manual run: processing current hour {start_hour} to {end_hour}")
         
         start_date = start_hour.strftime("%Y-%m-%d %H:%M:%S")
         end_date = end_hour.strftime("%Y-%m-%d %H:%M:%S")
-        context.log.info(f"Using last hour: {start_date} to {end_date}")
+        context.log.info(f"Using calculated date range: {start_date} to {end_date}")
     
     run_ingestion_workflow(start_date=start_date, end_date=end_date)
 

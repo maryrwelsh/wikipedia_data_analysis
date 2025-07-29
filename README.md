@@ -348,9 +348,16 @@ In the Dagster UI (http://localhost:3000):
 3. **Monitor Runs**: View scheduled run history and status
 4. **Manual Triggers**: Run the pipeline manually for specific time ranges
 
+### Manual vs Scheduled Execution
+
+The pipeline automatically detects execution context and chooses appropriate date ranges:
+
+- **📅 Scheduled Runs**: Process the **previous complete hour** (e.g., at 2:15 PM, processes 1:00-2:00 PM data)
+- **🖱️ Manual Runs**: Process the **current hour** (e.g., at 2:30 PM, processes 2:00-3:00 PM data, even if incomplete)
+
 ### Custom Date Ranges
 
-While the schedule runs automatically, you can still trigger manual runs for specific date ranges:
+For specific historical data or custom ranges, provide explicit configuration:
 
 ```python
 # In Dagster UI, use the "Materialize" button with custom config:

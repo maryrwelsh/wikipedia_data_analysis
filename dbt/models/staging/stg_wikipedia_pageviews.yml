@@ -1,0 +1,34 @@
+
+version: 2
+
+models:
+  - name: stg_wikipedia_pageviews
+    description: "Staging table for Wikipedia page view data"
+    columns:
+      - name: pageview_date
+        description: "The date for the page views"
+        data_type: date
+        data_tests:
+          - not_null
+      - name: pageview_hour
+        description: "The hour for the page views"
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: pageview_source
+        description: "The project_code aka the source code of the page view e.g. m (mobile), d (desktop), etc"
+        data_type: varchar
+      - name: page_language
+        description: "The language the page is in"
+        data_type: varchar
+      - name: page_title
+        description: "The exact title of the Wikipedia page that was viewed"
+        data_type: varchar
+      - name: page_category
+        description: "The category of the page_title generated using Snowflake's Cortex AI"
+        data_type: varchar
+      - name: view_count
+        description: "The number of times the specific page was viewed during that particular hour"
+        data_type: int
+      - name: byte_size
+        description: "The approximate size of the page in bytes"

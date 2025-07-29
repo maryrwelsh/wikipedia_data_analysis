@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikipedia_dagster"
+version = "0.1.0"
+description = "Dagster orchestration for Wikipedia data analysis pipeline"
+authors = [
+    {name = "Mary Welsh", email = "maryrosewelsh42@gmail.com"}
+]
+dependencies = [
+    "dagster",
+    "dagster-dbt",
+    "dbt-core",
+    "dbt-snowflake",
+]
+
+[tool.dagster]
+module_name = "dagster.definitions" 

@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: raw_wikipedia_pageviews
+    schema: public
+    tables:
+      - name: raw_wikipedia_pageviews
+        meta:
+          dagster:
+            asset_key: ['raw_wikipedia_pageviews'] 

@@ -29,7 +29,7 @@ class Config:
     SNOWFLAKE_DATABASE = os.getenv('SNOWFLAKE_DATABASE')
     SNOWFLAKE_SCHEMA = os.getenv('SNOWFLAKE_SCHEMA')
     SNOWFLAKE_STAGE_NAME = os.getenv('SNOWFLAKE_STAGE_NAME', 'WIKIPEDIA_PAGEVIEWS_STAGE') # Default if not set
-    SNOWFLAKE_TABLE_NAME = os.getenv('SNOWFLAKE_TABLE_NAME', 'WIKIPEDIA_PAGEVIEWS_RAW') # Default if not set
+    SNOWFLAKE_TABLE_NAME = os.getenv('SNOWFLAKE_TABLE_NAME', 'RAW_WIKIPEDIA_PAGEVIEWS') # Default if not set
 
     # Date Range Configuration (from environment variables)
     START_DATE_STR = os.getenv('START_DATE')
@@ -326,12 +326,27 @@ def get_date_range_from_config():
     except ValueError as e:
         raise ValueError(f"Invalid date format in environment variables. Please use YYYY-MM-DD HH:MM:SS. Error: {e}")
 
-def run_ingestion_workflow():
-    """Orchestrates the entire data ingestion workflow."""
+def run_ingestion_workflow(start_date=None, end_date=None):
+    """Orchestrates the entire data ingestion workflow.
+    
+    Args:
+        start_date (str, optional): Start date in format 'YYYY-MM-DD HH:MM:SS'. 
+                                   If not provided, uses START_DATE from environment.
+        end_date (str, optional): End date in format 'YYYY-MM-DD HH:MM:SS'.
+                                 If not provided, uses END_DATE from environment.
+    """
 
-    # 1. Get configuration from environment variables
+    # 1. Get configuration from parameters or environment variables
     try:
-        start_dt, end_dt = get_date_range_from_config()
+        if start_date and end_date:
+            # Parse provided parameters
+            start_dt = datetime.strptime(start_date, Config.DATE_FORMAT)
+            end_dt = datetime.strptime(end_date, Config.DATE_FORMAT)
+            log.info(f"Using provided date range: {start_date} to {end_date}")
+        else:
+            # Fall back to environment variables
+            start_dt, end_dt = get_date_range_from_config()
+            log.info(f"Using environment date range: {start_dt} to {end_dt}")
     except ValueError as e:
         log.error(f"Configuration error for date range: {e}")
         return

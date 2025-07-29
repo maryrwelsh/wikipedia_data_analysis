@@ -10,7 +10,7 @@ WITH wiki_data AS(
         , CLASSIFY_WIKIPEDIA_PAGE(PAGE_TITLE) AS page_category_ai -- Categorize the PAGE_TITLE using Snowflake's Cortex AI
         , VIEW_COUNT
         , BYTE_SIZE
-    FROM snowflake_learning_db.public.wikipedia_pageviews_raw -- Use the table that was created in the ingest script
+    FROM {{ source('raw_wikipedia_pageviews', 'raw_wikipedia_pageviews') }} -- Use the table that was created in the ingest script
     WHERE page_language = 'en' -- We only care about English pages for now
 -- LIMIT 1000 -- For testing we limit the dataset to save $
 )

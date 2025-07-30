@@ -17,9 +17,9 @@ clean-targets:
 
 models:
   wikipedia_dbt:
-    +schema: WIKIPEDIA
-  wikipedia_pageviews:
+    +schema: wikipedia
     +materialized: table
 
 on-run-start:
-  - "{{ create_cortex_udf }}"
+  - "{{ create_schema_if_not_exists() }}"
+  - "{{ create_cortex_udf() }}"

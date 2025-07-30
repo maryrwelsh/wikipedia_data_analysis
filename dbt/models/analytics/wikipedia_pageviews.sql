@@ -1,3 +1,5 @@
+{{ config(materialized='view') }}
+
 -- Final data mart view
 SELECT
 dd.*

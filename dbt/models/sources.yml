@@ -2,7 +2,7 @@ version: 2
 
 sources:
   - name: raw_wikipedia_pageviews
-    schema: public
+    schema: wikipedia
     tables:
       - name: raw_wikipedia_pageviews
         meta:

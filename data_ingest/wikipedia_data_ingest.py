@@ -27,13 +27,10 @@ class Config:
     SNOWFLAKE_PASSWORD = os.getenv('SNOWFLAKE_PASSWORD')
     SNOWFLAKE_WAREHOUSE = os.getenv('SNOWFLAKE_WAREHOUSE')
     SNOWFLAKE_DATABASE = os.getenv('SNOWFLAKE_DATABASE')
-    SNOWFLAKE_SCHEMA = os.getenv('SNOWFLAKE_SCHEMA')
+    SNOWFLAKE_SCHEMA = os.getenv('SNOWFLAKE_SCHEMA', 'WIKIPEDIA')
+    SNOWFLAKE_ROLE = os.getenv('SNOWFLAKE_ROLE')
     SNOWFLAKE_STAGE_NAME = os.getenv('SNOWFLAKE_STAGE_NAME', 'WIKIPEDIA_PAGEVIEWS_STAGE') # Default if not set
     SNOWFLAKE_TABLE_NAME = os.getenv('SNOWFLAKE_TABLE_NAME', 'RAW_WIKIPEDIA_PAGEVIEWS') # Default if not set
-
-    # Date Range Configuration (from environment variables)
-    START_DATE_STR = os.getenv('START_DATE')
-    END_DATE_STR = os.getenv('END_DATE')
 
 # --- Logging Setup ---
 def setup_logging():
@@ -169,7 +166,7 @@ class WikipediaDownloader:
 class SnowflakeLoader:
     """Handles connection, setup, and data loading to Snowflake."""
 
-    def __init__(self, account, user, password, warehouse, database, schema):
+    def __init__(self, account, user, password, warehouse, database, schema, role):
         # Validate that all required connection parameters are provided
         required_params = {
             "account": account,
@@ -177,14 +174,27 @@ class SnowflakeLoader:
             "password": password,
             "warehouse": warehouse,
             "database": database,
-            "schema": schema
+            "schema": schema,
+            "role": role
         }
+        # Role is optional, so we check it differently
+        if not role:
+            del required_params["role"]
+
         for param, value in required_params.items():
             if not value:
                 raise ValueError(f"Missing required Snowflake connection parameter: {param}. "
                                  f"Please ensure '{param.upper()}' environment variable is set.")
 
-        self.connection_params = required_params
+        self.connection_params = {
+            "account": account,
+            "user": user,
+            "password": password,
+            "warehouse": warehouse,
+            "database": database,
+            "schema": schema,
+            "role": role
+        }
         self.conn = None
 
     def connect(self):
@@ -223,15 +233,27 @@ class SnowflakeLoader:
 
         cur = self.conn.cursor()
         try:
-            log.info(f"Ensuring stage '{stage_name}' exists...")
-            if not self._execute_sql(cur, f"CREATE STAGE IF NOT EXISTS {stage_name}",
-                                     f"Error creating stage '{stage_name}'"):
+            # Force use of WIKIPEDIA schema (consistent across pipeline)
+            schema = 'WIKIPEDIA'
+            
+            # First, ensure the schema exists
+            log.info(f"Ensuring schema '{schema}' exists...")
+            schema_sql = f"CREATE SCHEMA IF NOT EXISTS {schema}"
+            if not self._execute_sql(cur, schema_sql,
+                                   f"Error creating schema '{schema}'"):
                 return False
-            log.info(f"Stage '{stage_name}' is ready.")
+            log.info(f"Schema '{schema}' is ready.")
+            
+            log.info(f"Ensuring stage '{stage_name}' exists in schema '{schema}'...")
+            stage_sql = f"CREATE STAGE IF NOT EXISTS {schema}.{stage_name}"
+            if not self._execute_sql(cur, stage_sql,
+                                     f"Error creating stage '{schema}.{stage_name}'"):
+                return False
+            log.info(f"Stage '{schema}.{stage_name}' is ready.")
 
-            log.info(f"Ensuring table '{table_name}' exists...")
+            log.info(f"Ensuring table '{table_name}' exists in schema '{schema}'...")
             table_sql = f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
+                CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
                     PROJECT_CODE VARCHAR,
                     PAGE_TITLE VARCHAR,
                     VIEW_COUNT NUMBER,
@@ -240,17 +262,19 @@ class SnowflakeLoader:
                     LOAD_TIMESTAMP TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
             """
-            if not self._execute_sql(cur, table_sql, f"Error creating table '{table_name}'"):
+            if not self._execute_sql(cur, table_sql, f"Error creating table '{schema}.{table_name}'"):
                 return False
-            log.info(f"Table '{table_name}' is ready.")
+            log.info(f"Table '{schema}.{table_name}' is ready.")
             return True
         finally:
             cur.close()
 
     def _upload_file_to_stage(self, cursor, local_path, file_name, stage_name):
         """Uploads a single file to the Snowflake internal stage."""
-        log.info(f"Uploading '{file_name}' to stage '{stage_name}'...")
-        sql_command = f"PUT file://{local_path} @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        schema = self.connection_params.get('schema', 'WIKIPEDIA')
+        full_stage_name = f"{schema}.{stage_name}"
+        log.info(f"Uploading '{file_name}' to stage '{full_stage_name}'...")
+        sql_command = f"PUT file://{local_path} @{full_stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
         if self._execute_sql(cursor, sql_command, f"Error uploading '{file_name}' to stage"):
             log.info(f"Successfully uploaded '{file_name}'.")
             return True
@@ -258,10 +282,13 @@ class SnowflakeLoader:
 
     def _copy_data_into_table(self, cursor, file_name, stage_name, table_name):
         """Copies data from a staged file into the target table."""
-        log.info(f"Copying data from '{file_name}' (in stage) into table '{table_name}'...")
+        schema = self.connection_params.get('schema', 'WIKIPEDIA')
+        full_table_name = f"{schema}.{table_name}"
+        full_stage_name = f"{schema}.{stage_name}"
+        log.info(f"Copying data from '{file_name}' (in stage) into table '{full_table_name}'...")
         copy_sql = f"""
-            COPY INTO {table_name} (PROJECT_CODE, PAGE_TITLE, VIEW_COUNT, BYTE_SIZE, FILE_NAME)
-            FROM (SELECT $1, $2, $3, $4, '{file_name}' FROM @{stage_name}/{file_name})
+            COPY INTO {full_table_name} (PROJECT_CODE, PAGE_TITLE, VIEW_COUNT, BYTE_SIZE, FILE_NAME)
+            FROM (SELECT $1, $2, $3, $4, '{file_name}' FROM @{full_stage_name}/{file_name})
             FILE_FORMAT = (
                 TYPE = CSV
                 FIELD_DELIMITER = ' '
@@ -273,9 +300,9 @@ class SnowflakeLoader:
             ON_ERROR = 'CONTINUE'
         """
         if self._execute_sql(cursor, copy_sql, f"Error copying data from '{file_name}' to table"):
-            log.info(f"Successfully copied data from '{file_name}' to '{table_name}'.")
+            log.info(f"Successfully copied data from '{file_name}' to '{full_table_name}'.")
             # Optional: Remove file from stage after successful load
-            # self._execute_sql(cursor, f"REMOVE @{stage_name}/{file_name}", f"Error removing '{file_name}' from stage")
+            # self._execute_sql(cursor, f"REMOVE @{full_stage_name}/{file_name}", f"Error removing '{file_name}' from stage")
             return True
         return False
 
@@ -308,48 +335,19 @@ class SnowflakeLoader:
 
 
 # --- Main Application Logic ---
-def get_date_range_from_config():
-    """Parses start and end dates from Config based on environment variables."""
-    start_date_str = Config.START_DATE_STR
-    end_date_str = Config.END_DATE_STR
+def get_current_hour_datetime():
+    """Returns the current datetime rounded down to the hour."""
+    current_datetime = datetime.now()
+    # Round down to the current hour (set minutes, seconds, microseconds to 0)
+    current_hour = current_datetime.replace(minute=0, second=0, microsecond=0)
+    return current_hour
 
-    if not start_date_str or not end_date_str:
-        raise ValueError(
-            "START_DATE and END_DATE environment variables must be set. "
-            "Example: START_DATE='2025-05-01 10:00:00' END_DATE='2025-05-01 11:00:00'"
-        )
+def run_ingestion_workflow():
+    """Orchestrates the entire data ingestion workflow for the current hour only."""
 
-    try:
-        start_dt = datetime.strptime(start_date_str, Config.DATE_FORMAT)
-        end_dt = datetime.strptime(end_date_str, Config.DATE_FORMAT)
-        return start_dt, end_dt
-    except ValueError as e:
-        raise ValueError(f"Invalid date format in environment variables. Please use YYYY-MM-DD HH:MM:SS. Error: {e}")
-
-def run_ingestion_workflow(start_date=None, end_date=None):
-    """Orchestrates the entire data ingestion workflow.
-    
-    Args:
-        start_date (str, optional): Start date in format 'YYYY-MM-DD HH:MM:SS'. 
-                                   If not provided, uses START_DATE from environment.
-        end_date (str, optional): End date in format 'YYYY-MM-DD HH:MM:SS'.
-                                 If not provided, uses END_DATE from environment.
-    """
-
-    # 1. Get configuration from parameters or environment variables
-    try:
-        if start_date and end_date:
-            # Parse provided parameters
-            start_dt = datetime.strptime(start_date, Config.DATE_FORMAT)
-            end_dt = datetime.strptime(end_date, Config.DATE_FORMAT)
-            log.info(f"Using provided date range: {start_date} to {end_date}")
-        else:
-            # Fall back to environment variables
-            start_dt, end_dt = get_date_range_from_config()
-            log.info(f"Using environment date range: {start_dt} to {end_dt}")
-    except ValueError as e:
-        log.error(f"Configuration error for date range: {e}")
-        return
+    # 1. Get the current hour to process
+    current_hour = get_current_hour_datetime()
+    log.info(f"Processing Wikipedia pageview data for current hour: {current_hour}")
 
     # Prepare Snowflake credentials from Config (which reads env vars)
     sf_creds = {
@@ -358,12 +356,17 @@ def run_ingestion_workflow(start_date=None, end_date=None):
         "password": Config.SNOWFLAKE_PASSWORD,
         "warehouse": Config.SNOWFLAKE_WAREHOUSE,
         "database": Config.SNOWFLAKE_DATABASE,
-        "schema": Config.SNOWFLAKE_SCHEMA
+        "schema": Config.SNOWFLAKE_SCHEMA,
+        "role": Config.SNOWFLAKE_ROLE
     }
 
-    # 2. Download data
+    # 2. Download data for the current hour only
     downloader = WikipediaDownloader(Config.BASE_URL, Config.LOCAL_DATA_DIR)
-    downloader.download_data_for_range(start_dt, end_dt)
+    success = downloader.process_hour_data(current_hour)
+    
+    if not success:
+        log.error(f"Failed to download/process data for {current_hour}. Aborting.")
+        return
 
     # 3. Load data to Snowflake
     try:

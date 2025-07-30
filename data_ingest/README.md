@@ -1,176 +1,205 @@
-# Wikipedia Pageview Ingestion to Snowflake
+# Wikipedia Pageview Data Ingestion
 
-This Python script facilitates the automated download of Wikipedia hourly pageview data, unzips it, and then ingests it into a Snowflake data warehouse. It is designed with Clean Code principles in mind, emphasizing modularity, clear responsibilities, and configuration through environment variables.
+This Python module facilitates the automated download of Wikipedia hourly pageview data for the current hour and ingests it into a Snowflake data warehouse. It is designed with Clean Code principles, emphasizing modularity, clear responsibilities, and robust configuration management.
 
 ## Table of Contents
 
 * [Features](#features)
 * [Prerequisites](#prerequisites)
 * [Setup](#setup)
-    * [Environment Variables (`.env`)](#environment-variables-env)
+    * [Environment Variables](#environment-variables)
 * [Usage](#usage)
+    * [Manual Execution](#manual-execution)
+    * [Orchestrated Execution](#orchestrated-execution)
+* [Architecture](#architecture)
 * [Clean Code Principles Applied](#clean-code-principles-applied)
 * [Future Improvements](#future-improvements)
 
 ## Features
 
-* **Automated Data Download:** Downloads hourly Wikipedia pageview `.gz` files for a specified date range.
-* **Parallel Processing for Downloads:** Utilizes a thread pool to download and unzip files concurrently, significantly speeding up the initial data acquisition phase.
-* **Automatic Unzipping:** Unzips downloaded `.gz` files into `.txt` format.
-* **Idempotent Operations:** Skips downloading/unzipping files that already exist locally.
-* **Snowflake Integration:**
-    * Connects to a Snowflake instance.
-    * Ensures the existence of a Snowflake internal stage and a target raw table.
-    * Uploads local `.txt` data files to the Snowflake stage.
-    * Copies data from the stage into the Snowflake table.
-* **Robust Error Handling:** Logs errors gracefully and continues processing where possible.
-* **Environment-Driven Configuration:** All sensitive and environment-specific parameters are managed via environment variables (with `.env` support for local development).
+* **Automated Current Hour Processing**: Downloads Wikipedia pageview data for the current hour only
+* **Intelligent Hour Detection**: Automatically determines the current hour and downloads exactly one file
+* **Parallel Processing**: Utilizes thread pools for concurrent downloads and unzipping, significantly improving performance
+* **Automatic Unzipping**: Extracts downloaded `.gz` files into `.txt` format for processing
+* **Idempotent Operations**: Skips downloading/unzipping files that already exist locally
+* **Snowflake Integration**:
+    * Connects to Snowflake with robust error handling
+    * Creates internal stage and target table in the WIKIPEDIA schema
+    * Uploads local data files to Snowflake stage
+    * Copies data from stage into the target table with proper formatting
+* **Schema Consistency**: All objects created in dedicated WIKIPEDIA schema
+* **Robust Error Handling**: Comprehensive logging and graceful error recovery
+* **Environment-Driven Configuration**: All parameters managed via environment variables
+* **Data Validation**: Built-in checks for data availability and file integrity
 
 ## Prerequisites
 
-Before running the script, ensure you have the following installed:
+Before running the ingestion script, ensure you have:
 
-* **Python 3.8+**
-* **`pip`** (Python package installer)
-
-You will also need:
-
-* **Snowflake Account:** Access to a Snowflake account with necessary permissions to create stages, tables, and load data.
-* **Wikipedia Pageview Data:** The script fetches this automatically, but internet access is required.
+* **Python 3.11+**
+* **Required Python packages**:
+  ```bash
+  pip install requests snowflake-connector-python python-dotenv
+  ```
+* **Snowflake Account**: Access with permissions to create stages, tables, and load data
+* **Internet Access**: Required for downloading Wikipedia pageview data
 
 ## Setup
 
-1.  **Clone the repository (or save the script):**
-    Save the provided Python code as `app.py` (or any other `.py` filename).
+### Environment Variables
 
-2.  **Install Python Dependencies:**
-    Navigate to the directory containing `app.py` in your terminal and run:
-
-    ```bash
-    pip install requests snowflake-connector-python python-dotenv
-    ```
-
-3.  **Create a `.env` file:**
-    In the same directory as `app.py`, create a file named `.env`. This file will store your configuration, especially sensitive Snowflake credentials. **Do NOT commit this file to version control (e.g., Git).**
-
-### Environment Variables (`.env`)
-
-The `.env` file is crucial for configuring the script. Populate it with your specific details.
+Create a `.env` file in the project root with your configuration:
 
 ```ini
-# .env file for local development configuration
+# Snowflake Connection Details (Required)
+SNOWFLAKE_ACCOUNT="your_account_identifier"
+SNOWFLAKE_USER="your_username"
+SNOWFLAKE_PASSWORD="your_password"
+SNOWFLAKE_WAREHOUSE="your_warehouse"
+SNOWFLAKE_DATABASE="your_database"
+SNOWFLAKE_SCHEMA="WIKIPEDIA"  # All objects created here
 
-# --- General Configuration ---
-# Optional: Local directory to store downloaded pageview files
-# If not set, defaults to "wikipedia_pageviews"
-# LOCAL_DATA_DIR=my_pageviews_data
+# Data Ingestion Settings
+LOCAL_DATA_DIR="wikipedia_pageviews_files"
+MAX_DOWNLOAD_WORKERS=5
 
-# Optional: Number of parallel workers for downloading files.
-# If not set, defaults to 5. Adjust based on your network and CPU.
-# MAX_DOWNLOAD_WORKERS=5
-
-# --- Date Range for Data Download ---
-# Required: Start and End dates for data ingestion
-# Format: YYYY-MM-DD HH:MM:SS
-START_DATE="2024-01-01 00:00:00"
-END_DATE="2024-01-01 02:00:00"
-
-# --- Snowflake Connection Details ---
-# Required: Your Snowflake account identifier (e.g., 'your_org-your_account')
-SNOWFLAKE_ACCOUNT="YOUR_SNOWFLAKE_ACCOUNT_IDENTIFIER"
-
-# Required: Your Snowflake user name
-SNOWFLAKE_USER="YOUR_SNOWFLAKE_USERNAME"
-
-# Required: Your Snowflake password
-# WARNING: Storing sensitive credentials directly in .env is for local dev ONLY.
-# For production, use secure secret management services (e.g., AWS Secrets Manager, Azure Key Vault).
-SNOWFLAKE_PASSWORD="YOUR_SNOWFLAKE_PASSWORD"
-
-# Required: Your default Snowflake warehouse
-SNOWFLAKE_WAREHOUSE="YOUR_SNOWFLAKE_WAREHOUSE"
-
-# Required: Your default Snowflake database
-SNOWFLAKE_DATABASE="YOUR_SNOWFLAKE_DATABASE"
-
-# Required: Your default Snowflake schema
-SNOWFLAKE_SCHEMA="YOUR_SNOWFLAKE_SCHEMA"
-
-# --- Snowflake Object Names (Optional, defaults provided in code) ---
-# If not set, defaults to 'WIKIPEDIA_PAGEVIEWS_STAGE'
-# SNOWFLAKE_STAGE_NAME=MY_CUSTOM_STAGE
-
-# If not set, defaults to 'WIKIPEDIA_PAGEVIEWS_RAW'
-# SNOWFLAKE_TABLE_NAME=MY_CUSTOM_TABLE
+# Optional: Custom object names
+SNOWFLAKE_STAGE_NAME="WIKIPEDIA_PAGEVIEWS_STAGE"
+SNOWFLAKE_TABLE_NAME="RAW_WIKIPEDIA_PAGEVIEWS"
 ```
 
-**Important Security Note:** For production environments, it is strongly recommended to use a dedicated secrets management service (e.g., AWS Secrets Manager, Azure Key Vault, Google Secret Manager) instead of `.env` files for sensitive credentials.
+**Security Note**: For production environments, use dedicated secrets management services instead of `.env` files.
 
 ## Usage
 
-Once the setup is complete and your `.env` file is configured, simply run the script from your terminal:
+### Manual Execution
+
+Run the ingestion script directly:
 
 ```bash
-python app.py
+cd data_ingest/
+python wikipedia_data_ingest.py
 ```
 
 The script will:
+1. Automatically determine the current hour to process
+2. Download exactly one Wikipedia pageview file for that hour
+3. Extract and process the file locally
+4. Connect to Snowflake and create necessary objects
+5. Upload data to Snowflake stage
+6. Copy data into the `WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS` table
 
-1. Read the configuration from your environment variables (or `.env` file).
+### Orchestrated Execution
 
-2. Download and unzip the specified Wikipedia pageview data files into the `wikipedia_pageviews` directory (or your `LOCAL_DATA_DIR`) in parallel.
+The ingestion script is integrated with Dagster for automated orchestration:
 
-3. Connect to your Snowflake account.
+```bash
+cd orchestration/
+dagster dev -m wikipedia_dagster.definitions
+```
 
-4. Create the necessary stage and table in Snowflake if they don't already exist.
+This provides:
+- **Automatic scheduling** every hour
+- **Web-based monitoring** and control
+- **Integration with dbt transformations**
+- **Comprehensive logging** and error tracking
 
-5. Upload the unzipped data files to the Snowflake stage.
+## Architecture
 
-6. Copy the data from the stage into the `WIKIPEDIA_PAGEVIEWS_RAW` table (or your `SNOWFLAKE_TABLE_NAME`).
+### Data Flow
 
-7. Log its progress and any errors encountered.
+```
+Wikipedia Dumps → Download → Extract → Snowflake Stage → Raw Table
+     (.gz)           ↓           ↓            ↓            ↓
+                Local Files → Process → Upload → WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS
+```
+
+### Snowflake Objects Created
+
+The ingestion process automatically creates:
+
+1. **Schema**: `WIKIPEDIA`
+   - Creates the schema if it doesn't exist
+   - Ensures consistent organization across the pipeline
+
+2. **Stage**: `WIKIPEDIA.WIKIPEDIA_PAGEVIEWS_STAGE`
+   - Internal Snowflake stage for file uploads
+   - Temporary storage for data loading
+
+3. **Table**: `WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS`
+   ```sql
+   CREATE TABLE WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS (
+       PROJECT_CODE VARCHAR,        -- e.g., 'en.wikipedia'
+       PAGE_TITLE VARCHAR,          -- Wikipedia page title
+       VIEW_COUNT NUMBER,           -- Hourly view count
+       BYTE_SIZE NUMBER,            -- Page size in bytes  
+       FILE_NAME VARCHAR,           -- Source file name
+       LOAD_TIMESTAMP TIMESTAMP_NTZ -- When data was loaded
+   );
+   ```
+
+### Class Structure
+
+* **`Config`**: Centralized configuration management with environment variable loading
+* **`WikipediaDownloader`**: Handles data download and local file management
+* **`SnowflakeLoader`**: Manages all Snowflake interactions (connection, setup, data loading)
+* **`run_ingestion_workflow`**: Main orchestration function
 
 ## Clean Code Principles Applied
 
-This codebase strives to adhere to the following Clean Code principles:
+### Single Responsibility Principle (SRP)
+- **`Config`**: Manages all configuration and environment variables
+- **`WikipediaDownloader`**: Handles data acquisition and local processing
+- **`SnowflakeLoader`**: Manages database operations exclusively
+- **`run_ingestion_workflow`**: Orchestrates the high-level workflow
 
-* **Single Responsibility Principle (SRP):**
+### Other Principles
+* **Meaningful Names**: Clear, descriptive variable and function names
+* **Small Functions**: Complex logic broken into focused, testable methods
+* **Error Handling**: Explicit error handling with informative logging
+* **Configuration Management**: Externalized configuration via environment variables
+* **Reduced Dependencies**: Minimal coupling between components
+* **Self-Documenting Code**: Clear structure reduces need for extensive comments
 
-  * `Config` class centralizes all configuration.
+### Error Handling Features
+* **Graceful Degradation**: Continues processing when possible after errors
+* **Comprehensive Logging**: Detailed logging at all stages for debugging
+* **Connection Management**: Robust Snowflake connection handling with cleanup
+* **File Validation**: Checks for data integrity and availability
 
-  * `WikipediaDownloader` class is solely responsible for downloading and unzipping data.
+## Integration with dbt
 
-  * `SnowflakeLoader` class manages all interactions with Snowflake (connection, setup, data loading).
+The ingestion script creates the raw table that serves as the source for dbt transformations:
 
-  * The main `run_ingestion_workflow` function orchestrates the high-level flow.
-
-* **Meaningful Names:** Variables, functions, and classes are named to clearly convey their purpose (e.g., `_get_file_metadata`, `_upload_file_to_stage`).
-
-* **Small Functions:** Complex logic is broken down into smaller, focused methods, each doing "one thing well." This improves readability and testability.
-
-* **Error Handling:** Explicit `try-except` blocks are used, and errors are logged informatively, allowing the application to fail gracefully or continue where appropriate.
-
-* **Configuration over Hardcoding:** All dynamic parameters are externalized to environment variables, making the code more flexible and portable across different environments.
-
-* **Reduced Global State:** Dependencies are passed explicitly to classes and methods, reducing reliance on global variables.
-
-* **Self-Documenting Code:** The clarity of the code structure and naming reduces the need for excessive comments. Docstrings explain the purpose of classes and public methods.
+1. **Raw Data**: Loaded into `WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS`
+2. **dbt Processing**: Transforms raw data into analytics-ready models
+3. **Schema Consistency**: All objects use the same WIKIPEDIA schema
+4. **Dependency Management**: dbt automatically waits for raw data availability
 
 ## Future Improvements
 
-* **Logging Enhancements:** Implement more granular logging levels or structured logging for easier analysis.
+### Performance Enhancements
+* **Parallel Snowflake Loading**: Multi-threaded uploads for large datasets
+* **Incremental Loading**: Only process new/changed data
+* **Compression Optimization**: Better file handling and compression strategies
 
-* **Configuration Validation:** Add more robust validation for all environment variables (e.g., type checking for numbers, stricter date format validation).
+### Monitoring and Observability
+* **Metrics Collection**: Track download speeds, load times, error rates
+* **Health Checks**: Monitor data freshness and quality
+* **Alerting Integration**: Notify on failures or data issues
 
-* **Error Reporting:** Integrate with an error reporting service (e.g., Sentry, Rollbar) for production environments.
+### Data Quality
+* **Validation Rules**: Enhanced data integrity checks before loading
+* **Duplicate Detection**: Prevent duplicate data ingestion
+* **Schema Evolution**: Handle changes in Wikipedia data format
 
-* **Parallel Processing for Snowflake Loading:** While downloads are parallel, explore options for parallelizing Snowflake data loading (e.g., using Snowflake's multi-cluster warehouses or more advanced `COPY INTO` options) if performance becomes a bottleneck. This would require careful management of database connections and potential contention.
+### Cloud Integration
+* **Direct Cloud Storage**: Upload to S3/GCS instead of local files
+* **Serverless Deployment**: AWS Lambda/Google Cloud Functions support
+* **Auto-scaling**: Dynamic resource allocation based on data volume
 
-* **Data Quality Checks:** Implement checks for data integrity before loading into Snowflake.
-
-* **Monitoring:** Add metrics collection for download progress, load times, and error rates.
-
-* **Command-Line Interface (CLI):** Use a library like `argparse` or `Click` to allow overriding environment variables via command-line arguments for more flexibility.
-
-* **Cloud Storage Integration:** Instead of local files, consider downloading directly to cloud storage (e.g., S3, GCS) if Snowflake is configured to read from there.
+### Configuration Management
+* **CLI Interface**: Command-line arguments for flexible execution
+* **Configuration Validation**: Strict validation of all parameters
+* **Multiple Environments**: Support for dev/staging/production configurations
 

@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.dagster]
-module_name = "dagster.definitions" 
+module_name = "wikipedia_dagster.definitions" 

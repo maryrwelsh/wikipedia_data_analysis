@@ -12,7 +12,7 @@ WITH wiki_data AS(
         , BYTE_SIZE
     FROM {{ source('raw_wikipedia_pageviews', 'raw_wikipedia_pageviews') }} -- Use the table that was created in the ingest script
     WHERE page_language = 'en' -- We only care about English pages for now
--- LIMIT 1000 -- For testing we limit the dataset to save $
+ LIMIT 1000 -- For testing we limit the dataset to save $
 )
 , categories_cleanup AS(
     SELECT

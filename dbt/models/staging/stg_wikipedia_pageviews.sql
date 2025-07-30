@@ -44,6 +44,7 @@ WITH wiki_data AS(
         , BYTE_SIZE
     FROM categories_cleanup
 )
+-- Final table with the pageview_source parsed out of the pageview_source_raw column
 SELECT
     pageview_date
   , pageview_hour

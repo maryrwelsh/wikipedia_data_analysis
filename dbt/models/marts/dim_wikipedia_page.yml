@@ -6,17 +6,20 @@ models:
     description: "Dimension table for Wikipedia page view data"
     columns:
       - name: dim_wikipedia_page_id
-        description: "The surrogate/primary key for the dimension - generated using the pageview_source, page_title, and page_category columns"
+        description: "The surrogate/primary key for the dimension - generated using the pageview_source, page_language, page_title, and page_category columns"
         data_type: date
         data_tests:
           - not_null
       - name: pageview_source
-        description: "The project_code aka the source code of the page view e.g. m (mobile), d (desktop), etc"
+        description: "The project_code aka the source code of the page view e.g. Mobile, Desktop, etc"
+        data_type: varchar
+      - name: page_language
+        description: "The language of the page"
         data_type: varchar
       - name: page_title
         description: "The exact title of the Wikipedia page that was viewed"
         data_type: varchar
       - name: page_category
-        description: "The category of the page_title generated using Snowflake's Cortex AI"
+        description: "The category of the page generated using Snowflake's Cortex AI"
         data_type: varchar
       

@@ -352,8 +352,10 @@ In the Dagster UI (http://localhost:3000):
 
 The pipeline automatically detects execution context and chooses appropriate date ranges:
 
-- **📅 Scheduled Runs**: Process the **previous complete hour** (e.g., at 2:15 PM, processes 1:00-2:00 PM data)
-- **🖱️ Manual Runs**: Process the **current hour** (e.g., at 2:30 PM, processes 2:00-3:00 PM data, even if incomplete)
+- **📅 Scheduled Runs**: Verify data availability and process the **latest available hour** (automatically finds the most recent data within 6 hours)
+- **🖱️ Manual Runs**: Intelligently check **current hour** first (if 15+ minutes have passed), then **previous hours** until available data is found
+
+> **💡 Smart Data Selection**: The pipeline automatically verifies Wikipedia data availability before processing, ensuring reliable downloads by checking actual file existence and falling back to the most recent available data.
 
 ### Custom Date Ranges
 

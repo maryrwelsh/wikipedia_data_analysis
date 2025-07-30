@@ -83,7 +83,7 @@ wikipedia_data_analysis/
 
 ### 1. Setup Environment
 
-```bash
+    ```bash
 # Clone the repository
 git clone https://github.com/maryrwelsh/wikipedia_data_analysis
 cd wikipedia_data_analysis
@@ -100,9 +100,9 @@ pip install -e orchestration/
 
 Copy the example environment file and configure your settings:
 
-```bash
+    ```bash
 cp .env_example .env
-```
+    ```
 
 Edit `.env` with your Snowflake credentials and configuration:
 

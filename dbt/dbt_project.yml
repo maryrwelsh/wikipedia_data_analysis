@@ -16,6 +16,8 @@ clean-targets:
   - "dbt_packages"
 
 models:
+  wikipedia_dbt:
+    +schema: WIKIPEDIA
   wikipedia_pageviews:
     +materialized: table
 

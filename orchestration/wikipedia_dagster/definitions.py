@@ -1,6 +1,6 @@
 from dagster import Definitions
 from dagster_dbt import DbtCliResource
-from .assets import raw_wikipedia_pageviews, dbt_assets, hourly_refresh_job, hourly_schedule
+from .assets import raw_wikipedia_pageviews, dbt_assets
 from .project import wikipedia_dbt_project
 from .schedules import schedules
 

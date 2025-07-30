@@ -1,5 +1,11 @@
 from datetime import datetime, timedelta
 import requests
+import sys
+from pathlib import Path
+
+# Add the parent directory to the Python path so we can import data_ingest
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from dagster import AssetExecutionContext, asset, define_asset_job, ScheduleDefinition, RunRequest, SkipReason
 from dagster_dbt import DbtCliResource, dbt_assets
 from .project import wikipedia_dbt_project

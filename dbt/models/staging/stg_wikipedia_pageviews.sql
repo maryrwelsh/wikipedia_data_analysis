@@ -4,7 +4,7 @@ WITH wiki_data AS(
     SELECT
         TO_DATE(SPLIT_PART(FILE_NAME, '-', 2), 'YYYYMMDD') AS pageview_date
         , LEFT(SPLIT_PART(SPLIT_PART(FILE_NAME, '-', 3), '.', 0), 2) AS pageview_hour
-        , SPLIT_PART(PROJECT_CODE, '.', 2) AS pageview_source
+        , SPLIT_PART(PROJECT_CODE, '.', 2) AS pageview_source_raw
         , SPLIT_PART(PROJECT_CODE, '.', 0) AS page_language
         , PAGE_TITLE
         , CLASSIFY_WIKIPEDIA_PAGE(PAGE_TITLE) AS page_category_ai -- Categorize the PAGE_TITLE using Snowflake's Cortex AI
@@ -18,7 +18,7 @@ WITH wiki_data AS(
     SELECT
         pageview_date
         , pageview_hour
-        , pageview_source
+        , pageview_source_raw
         , page_language
         , PAGE_TITLE
         , TRIM(SPLIT_PART(SPLIT_PART(SPLIT_PART(page_category_ai, '\n', 1), ',', 1), ' ', 2)) AS page_category_trimmed -- Trim off any new lines or excess categories it generates
@@ -26,19 +26,37 @@ WITH wiki_data AS(
         , BYTE_SIZE
     FROM wiki_data
 )
+, final_categories AS(
+    SELECT
+        pageview_date
+        , pageview_hour
+        , pageview_source_raw
+        , page_language
+        , PAGE_TITLE
+        , CASE WHEN page_category_trimmed NOT IN ('Technology', 'History', 'Science', 'Sports',
+                                                              'Arts_and_Culture', 'Geography', 'Politics', 'Current_Events',
+                                                              'Biography', 'Health', 'Nature', 'Entertainment',
+                                                              'Miscellaneous')
+            THEN 'Unknown'
+            ELSE page_category_trimmed
+            END AS page_category -- Bucket the rest of the categories into 'Unknown'
+        , VIEW_COUNT
+        , BYTE_SIZE
+    FROM categories_cleanup
+)
 SELECT
     pageview_date
-    , pageview_hour
-    , pageview_source
-    , page_language
-    , PAGE_TITLE
-    , CASE WHEN page_category_trimmed NOT IN ('Technology', 'History', 'Science', 'Sports',
-                                                          'Arts_and_Culture', 'Geography', 'Politics', 'Current_Events',
-                                                          'Biography', 'Health', 'Nature', 'Entertainment',
-                                                          'Miscellaneous')
-        THEN 'Unknown'
-        ELSE page_category_trimmed
-        END AS page_category -- Bucket the rest of the categories into 'Unknown'
-    , VIEW_COUNT
-    , BYTE_SIZE
-FROM categories_cleanup
+  , pageview_hour
+  , CASE WHEN pageview_source_raw = 'm' THEN 'Mobile Web'
+    WHEN pageview_source_raw = 'b' THEN 'Bot/Spider Traffic'
+        WHEN pageview_source_raw = 'd' THEN 'Desktop Web'
+            WHEN pageview_source_raw = 'f' THEN 'Mobile App'
+                WHEN pageview_source_raw = 't' THEN 'Tablet Web'
+                    WHEN pageview_source_raw = 'w' THEN 'Wikimedia Mobile App'
+                        ELSE 'Unknown' END AS pageview_source
+  , page_language
+  , PAGE_TITLE
+  , page_category
+  , VIEW_COUNT
+  , BYTE_SIZE
+FROM final_categories

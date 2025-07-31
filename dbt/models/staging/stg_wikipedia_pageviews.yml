@@ -32,3 +32,7 @@ models:
         data_type: int
       - name: byte_size
         description: "The approximate size of the page in bytes"
+        data_type: number
+      - name: load_timestamp
+        description: "Timestamp when the data was loaded into Snowflake - used for incremental processing"
+        data_type: timestamp_tz

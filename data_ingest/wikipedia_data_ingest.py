@@ -117,18 +117,25 @@ class WikipediaDownloader:
             return False
 
     def process_hour_data(self, current_date):
-        """Downloads and unzips an hourly Wikipedia pageview data file, if not already present."""
+        """Downloads and unzips an hourly Wikipedia pageview data file, if not already present.
+        
+        Returns:
+            str or None: The filename of the processed .txt file if successful, None if failed
+        """
         url, output_path_gz, output_path_txt, file_name_gz, file_name_txt = \
             self._get_file_metadata(current_date)
 
         if self._is_already_processed(output_path_txt, file_name_txt):
-            return True
+            return file_name_txt  # Return the filename even if already processed
 
         if not self._is_gz_downloaded(output_path_gz, file_name_gz):
             if not self._download_file(url, output_path_gz, file_name_gz):
-                return False # Failed to download
+                return None # Failed to download
 
-        return self._unzip_file(output_path_gz, output_path_txt, file_name_gz, file_name_txt)
+        if self._unzip_file(output_path_gz, output_path_txt, file_name_gz, file_name_txt):
+            return file_name_txt  # Return the filename of the successfully processed file
+        else:
+            return None  # Failed to unzip
 
     def download_data_for_range(self, start_dt, end_dt):
         """
@@ -306,20 +313,42 @@ class SnowflakeLoader:
             return True
         return False
 
-    def load_data_from_local_to_snowflake(self, local_data_dir, stage_name, table_name):
+    def load_data_from_local_to_snowflake(self, local_data_dir, stage_name, table_name, specific_file=None):
         """
         Uploads .txt files from a local directory to a Snowflake stage and loads them into a table.
+        
+        Args:
+            local_data_dir (str): Directory containing the data files
+            stage_name (str): Name of the Snowflake stage
+            table_name (str): Name of the target table
+            specific_file (str, optional): If provided, only upload this specific file instead of all .txt files
         """
         if not self.conn:
             log.error("No Snowflake connection available. Cannot load data.")
             return
 
-        txt_files = [f for f in os.listdir(local_data_dir) if f.endswith('.txt')]
-        if not txt_files:
-            log.info(f"No .txt files found in '{local_data_dir}'. Please ensure data is downloaded and unzipped.")
-            return
+        if specific_file:
+            # Only process the specific file
+            txt_files = [specific_file] if specific_file.endswith('.txt') else []
+            if not txt_files:
+                log.error(f"Specified file '{specific_file}' is not a .txt file.")
+                return
+            
+            # Check if the specific file exists
+            local_file_path = os.path.join(local_data_dir, specific_file)
+            if not os.path.exists(local_file_path):
+                log.error(f"Specified file '{specific_file}' not found in '{local_data_dir}'.")
+                return
+                
+            log.info(f"Processing specific file: {specific_file}")
+        else:
+            # Process all .txt files (original behavior)
+            txt_files = [f for f in os.listdir(local_data_dir) if f.endswith('.txt')]
+            if not txt_files:
+                log.info(f"No .txt files found in '{local_data_dir}'. Please ensure data is downloaded and unzipped.")
+                return
+            log.info(f"Found {len(txt_files)} .txt files to process for Snowflake loading.")
 
-        log.info(f"Found {len(txt_files)} .txt files to process for Snowflake loading.")
         cur = self.conn.cursor()
         try:
             for file_name in sorted(txt_files):
@@ -362,11 +391,13 @@ def run_ingestion_workflow():
 
     # 2. Download data for the current hour only
     downloader = WikipediaDownloader(Config.BASE_URL, Config.LOCAL_DATA_DIR)
-    success = downloader.process_hour_data(current_hour)
+    processed_file = downloader.process_hour_data(current_hour)
     
-    if not success:
+    if not processed_file:
         log.error(f"Failed to download/process data for {current_hour}. Aborting.")
         return
+
+    log.info(f"Successfully processed file: {processed_file}")
 
     # 3. Load data to Snowflake
     try:
@@ -384,10 +415,12 @@ def run_ingestion_workflow():
             log.error("Failed to set up Snowflake objects. Aborting data load.")
             return
 
+        # Only upload the specific file that was just processed
         snowflake_loader.load_data_from_local_to_snowflake(
             Config.LOCAL_DATA_DIR,
             Config.SNOWFLAKE_STAGE_NAME,
-            Config.SNOWFLAKE_TABLE_NAME
+            Config.SNOWFLAKE_TABLE_NAME,
+            specific_file=processed_file
         )
     finally:
         snowflake_loader.close_connection()

@@ -19,14 +19,15 @@ This Python module facilitates the automated download of Wikipedia hourly pagevi
 
 * **Automated Current Hour Processing**: Downloads Wikipedia pageview data for the current hour only
 * **Intelligent Hour Detection**: Automatically determines the current hour and downloads exactly one file
+* **Optimized File Upload**: Only uploads the latest downloaded file instead of all files in directory
 * **Parallel Processing**: Utilizes thread pools for concurrent downloads and unzipping, significantly improving performance
 * **Automatic Unzipping**: Extracts downloaded `.gz` files into `.txt` format for processing
 * **Idempotent Operations**: Skips downloading/unzipping files that already exist locally
 * **Snowflake Integration**:
     * Connects to Snowflake with robust error handling
     * Creates internal stage and target table in the WIKIPEDIA schema
-    * Uploads local data files to Snowflake stage
-    * Copies data from stage into the target table with proper formatting
+    * Uploads only the specific processed file to Snowflake stage
+    * Copies data from stage into the target table with proper formatting and timestamp tracking
 * **Schema Consistency**: All objects created in dedicated WIKIPEDIA schema
 * **Robust Error Handling**: Comprehensive logging and graceful error recovery
 * **Environment-Driven Configuration**: All parameters managed via environment variables

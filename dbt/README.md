@@ -24,13 +24,14 @@ This dbt project takes raw Wikipedia pageview data (from `WIKIPEDIA.RAW_WIKIPEDI
 
 ## Features
 
+* **Incremental Processing**: Efficient incremental materialization that only processes new data for optimal performance
 * **Data Cleaning & Standardization**: Processes raw pageview data with consistent data types and validation
-* **AI-Powered Categorization**: Optional Snowflake Cortex integration for automatic page categorization (configurable for performance)
+* **AI-Powered Categorization**: Snowflake Cortex integration for automatic page categorization with intelligent processing
 * **Automatic UDF Management**: The Cortex categorization User-Defined Function is automatically created/updated on each dbt run
 * **Schema Consistency**: All objects are created in the dedicated WIKIPEDIA schema
-* **Trending Topic Analysis**: Analytical models for aggregating pageviews by category and time
+* **Trending Topic Analysis**: Analytical models for aggregating pageviews by category and time with real-time updates
 * **Modular & Testable**: Follows dbt best practices for modularity, reusability, and testability
-* **Performance Optimized**: Limited dataset size by default to control costs and processing time
+* **Performance Optimized**: Incremental models with smart filtering for maximum efficiency and cost control
 
 ## Prerequisites
 
@@ -129,39 +130,40 @@ dbt/
 
 ### Staging Layer
 
-* **`stg_wikipedia_pageviews`**: 
-  * Cleans and standardizes raw pageview data
-  * Extracts language and project information
-  * Adds AI categorization (limited to 10,000 rows by default)
-  * Creates time-based columns for analysis
+* **`stg_wikipedia_pageviews`** (Incremental): 
+  * Incrementally processes raw pageview data with 2-hour window filtering
+  * Cleans and standardizes data with AI categorization
+  * Extracts language and project information with timestamp tracking
+  * Uses unique surrogate key for efficient incremental updates
 
 ### Marts Layer
 
-* **`dim_wikipedia_page`**: 
-  * Unique Wikipedia pages with metadata
-  * AI-generated category classifications
-  * Page-level attributes and keys
+* **`dim_wikipedia_page`** (Incremental): 
+  * Incrementally captures new unique Wikipedia page combinations
+  * AI-generated category classifications for new pages only
+  * Page-level attributes and keys with efficient deduplication
 
-* **`dim_date`**: 
+* **`dim_date`** (Table): 
   * Date dimension with calendar attributes
   * Supports time-based analysis and filtering
 
-* **`dim_hour`**: 
+* **`dim_hour`** (Table): 
   * Hour dimension (0-23) for hourly analysis
   * Useful for time-of-day trending patterns
 
-* **`fct_wikipedia_pageviews`**: 
-  * Central fact table linking all dimensions
-  * Contains pageview metrics and foreign keys
-  * Optimized for analytical queries
+* **`fct_wikipedia_pageviews`** (Incremental): 
+  * Incremental fact table with optimized performance
+  * Links all dimensions with foreign key relationships
+  * Contains pageview metrics with timestamp-based filtering
+  * Uses composite unique key for precise incremental updates
 
 ### Analytics Layer
 
-* **`wikipedia_pageviews`**: 
-  * Analytics-ready **view** (materialized as view, not table) combining all dimensions
-  * Pre-aggregated for common trending analysis
-  * Includes category, time, and view metrics
-  * Dynamically queries underlying fact and dimension tables
+* **`wikipedia_pageviews`** (View): 
+  * Analytics-ready **view** combining all dimensions with real-time data
+  * Dynamic aggregation for common trending analysis
+  * Includes category, time, and view metrics from incremental sources
+  * Always reflects the latest incremental updates
 
 ## Usage
 
@@ -219,15 +221,25 @@ This ensures:
 
 ### Performance Considerations
 
-* AI categorization is **limited to 10,000 rows** by default to control costs
+* AI categorization is **limited to 1,000 rows** by default to control costs/speed
 * To enable full categorization, modify `stg_wikipedia_pageviews.sql` and remove the `LIMIT` clause
 * The UDF categorizes pages into predefined topics using Snowflake Cortex
 
 ### Available Categories
 
-- Technology, History, Science, Sports, Arts_and_Culture
-- Geography, Politics, Current_Events, Biography, Health
-- Nature, Entertainment, Miscellaneous
+- Technology
+- History
+- Science
+- Sports
+- Arts_and_Culture
+- Geography
+- Politics
+- Current_Events
+- Biography
+- Health
+- Nature
+- Entertainment
+- Miscellaneous
 
 ## Clean Code Principles Applied
 
@@ -235,14 +247,14 @@ This ensures:
 * **Single Responsibility**: Each model has a focused purpose
 * **Readability**: Well-documented SQL with consistent formatting
 * **Idempotency**: Models can be run multiple times safely
-* **Testability**: Comprehensive test coverage with dbt's testing framework
+* **Testability**: Basic test coverage with dbt's testing framework
 * **Configuration Management**: Environment-driven configuration with sensible defaults
 
 ## Future Improvements
 
 * **Dynamic Category Management**: Store categories in a configuration table
 * **Performance Optimization**: 
-  * Implement incremental model strategies
+  * The AI calls can be expensive. Performance gains can be made by fine tuning Snowflake's warehouse settings (scale up/out) to handle processing larger row counts.
   * Add clustering keys for frequently queried tables
 * **Advanced Analytics**: 
   * Implement trending algorithms and anomaly detection

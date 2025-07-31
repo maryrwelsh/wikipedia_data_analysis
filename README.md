@@ -2,6 +2,43 @@
 
 A comprehensive data pipeline for analyzing Wikipedia pageview data using modern data engineering practices. This project combines data ingestion, transformation, and orchestration to provide insights into trending topics and content categorization.
 
+## 📑 Table of Contents
+
+* [🏗️ Architecture Overview](#%EF%B8%8F-architecture-overview)
+* [✨ Key Features](#-key-features)
+* [📁 Project Structure](#-project-structure)
+* [🚀 Quick Start](#-quick-start)
+  * [Prerequisites](#prerequisites)
+  * [1. Setup Environment](#1-setup-environment)
+  * [2. Configure Environment Variables](#2-configure-environment-variables)
+  * [3. Run the Pipeline](#3-run-the-pipeline)
+    * [Option A: Manual Execution](#option-a-manual-execution)
+    * [Option B: Orchestrated Execution (Recommended)](#option-b-orchestrated-execution-recommended)
+* [📊 Data Models](#-data-models)
+  * [Raw Data Schema](#raw-data-schema)
+  * [Transformed Models](#transformed-models)
+* [🤖 AI-Powered Categorization](#-ai-powered-categorization)
+* [🔧 Configuration](#-configuration)
+  * [dbt Configuration](#dbt-configuration)
+  * [Dagster Configuration](#dagster-configuration)
+  * [Schema Management](#schema-management)
+* [📈 Usage Examples](#-usage-examples)
+  * [Query Trending Topics](#query-trending-topics)
+  * [Analyze Page Performance](#analyze-page-performance)
+* [🧪 Testing](#-testing)
+  * [dbt Tests](#dbt-tests)
+  * [Data Quality Checks](#data-quality-checks)
+* [🔄 Scheduling](#-scheduling)
+* [⏰ Automated Scheduling](#-automated-scheduling)
+  * [Schedule Configuration](#schedule-configuration)
+  * [How It Works](#how-it-works)
+  * [Managing Schedules](#managing-schedules)
+* [🐛 Troubleshooting](#-troubleshooting)
+  * [Common Issues](#common-issues)
+  * [Logs](#logs)
+* [📚 Documentation](#-documentation)
+* [🙏 Acknowledgments](#-acknowledgments)
+
 ## 🏗️ Architecture Overview
 
 The pipeline consists of three main components:
@@ -37,12 +74,13 @@ The pipeline consists of three main components:
 ## ✨ Key Features
 
 - **🔄 Automated Hourly Processing**: Intelligent processing that automatically ingests the current hour's Wikipedia pageview data
-- **🤖 AI-Powered Categorization**: Uses Snowflake Cortex to automatically categorize Wikipedia pages into meaningful topics (configurable/limited for performance)
+- **⚡ Incremental Processing**: Efficient incremental data loading that only processes new data for optimal performance
+- **🤖 AI-Powered Categorization**: Uses Snowflake Cortex to automatically categorize Wikipedia pages into meaningful topics
 - **📊 Modern Data Stack**: Built with dbt, Dagster, and Snowflake for scalable data engineering
 - **⏱️ Real-time Monitoring**: Comprehensive logging and monitoring through Dagster's web interface
 - **🔧 Flexible Configuration**: Easy configuration through environment variables and parameterized functions
-- **📈 Analytics-Ready Models**: Produces clean, documented data models ready for analysis and visualization
-- **🚀 Parallel Processing**: Concurrent data downloads and processing for optimal performance
+- **📈 Analytics-Ready Models**: Produces clean, documented data models with incremental updates ready for analysis
+- **🚀 Optimized Processing**: Single-file ingestion and incremental transformations for maximum efficiency
 - **✅ Data Quality**: Built-in testing and validation with dbt's testing framework
 - **🏛️ Schema Consistency**: All objects created in dedicated WIKIPEDIA schema for organization
 
@@ -164,7 +202,7 @@ Then open http://localhost:3000 to:
 - Access real-time logs and metrics
 - Manage schedules and assets
 
-**🕐 Automatic Hourly Processing**: The pipeline is configured to automatically process the current hour's Wikipedia pageview data. The ingestion script intelligently determines the current hour and downloads exactly one file for that time period, ensuring your data is always up-to-date with the latest trending topics.
+**🕐 Automatic Hourly Processing**: The pipeline is configured to automatically process the current hour's Wikipedia pageview data with incremental efficiency. The ingestion script intelligently determines the current hour, downloads exactly one file, and the dbt models use incremental processing to only transform new data, ensuring optimal performance and up-to-date trending topics.
 
 ## 📊 Data Models
 
@@ -185,18 +223,17 @@ CREATE TABLE WIKIPEDIA.RAW_WIKIPEDIA_PAGEVIEWS (
 
 ### Transformed Models
 
-The dbt project creates several analytical models in the WIKIPEDIA schema:
+The dbt project creates several analytical models in the WIKIPEDIA schema with incremental processing:
 
-- **`stg_wikipedia_pageviews`**: Cleaned staging data with optional AI categorization (limited for performance)
-- **`dim_wikipedia_page`**: Dimension table with page metadata and categories
+- **`stg_wikipedia_pageviews`**: Incremental staging model with AI categorization and timestamp tracking
+- **`dim_wikipedia_page`**: Incremental dimension table capturing new page combinations
 - **`dim_date`**: Date dimension for time-based analysis
 - **`dim_hour`**: Hour dimension for hourly analysis
-- **`fct_wikipedia_pageviews`**: Fact table combining all dimensions
-- **`wikipedia_pageviews`**: Analytics-ready **view** for trending analysis
+- **`fct_wikipedia_pageviews`**: Incremental fact table with optimized performance
+- **`wikipedia_pageviews`**: Analytics-ready **view** for trending analysis with real-time data
 
 ## 🤖 AI-Powered Categorization
-
-The pipeline includes Snowflake Cortex integration for automatic page categorization. **Note**: AI categorization is currently limited/disabled by default for performance and cost optimization.
+The pipeline includes Snowflake Cortex integration for automatic page categorization. **Note**: AI categorization is currently limited by default for performance and cost optimization.
 
 Available categories include:
 - **Technology**
@@ -259,12 +296,12 @@ All database objects are created in the **WIKIPEDIA** schema by default:
 ```sql
 -- Get top trending categories for a specific date
 SELECT 
-    page_category_ai,
+    page_category,
     SUM(view_count) as total_views,
     COUNT(DISTINCT page_title) as unique_pages
 FROM WIKIPEDIA.wikipedia_pageviews
-WHERE pageview_date = '2025-01-01'
-GROUP BY page_category_ai
+WHERE date_day = '2025-01-01'
+GROUP BY page_category
 ORDER BY total_views DESC;
 ```
 
@@ -274,12 +311,11 @@ ORDER BY total_views DESC;
 -- Find most viewed pages by category
 SELECT 
     page_title,
-    page_category_ai,
+    page_category,
     SUM(view_count) as total_views
-FROM WIKIPEDIA.fct_wikipedia_pageviews f
-JOIN WIKIPEDIA.dim_wikipedia_page d ON f.page_key = d.page_key
-WHERE page_category_ai = 'Technology'
-GROUP BY page_title, page_category_ai
+FROM WIKIPEDIA.wikipedia_pageviews
+WHERE page_category = 'Technology'
+GROUP BY page_title, page_category
 ORDER BY total_views DESC
 LIMIT 10;
 ```
@@ -297,11 +333,9 @@ dbt test --select test_type:singular  # Run singular tests only
 
 ### Data Quality Checks
 
-The project includes comprehensive data quality tests:
-- Uniqueness constraints
+The project includes basic data quality tests:
 - Not null checks
-- Referential integrity
-- Custom business logic tests
+
 
 ## 🔄 Scheduling
 
@@ -311,20 +345,6 @@ The pipeline can be scheduled using Dagster:
 - **Manual Triggers**: On-demand execution via UI
 - **Conditional Execution**: Based on data availability
 
-## 🛠️ Development
-
-### Adding New Models
-
-1. Create new model in `dbt/models/`
-2. Add tests in model YAML files
-3. Update documentation in model YAML files
-4. Run `dbt run --select model_name` to test
-
-### Extending the Pipeline
-
-1. **New Data Sources**: Add ingestion scripts in `data_ingest/`
-2. **New Transformations**: Create dbt models in `dbt/models/`
-3. **New Assets**: Define in `orchestration/wikipedia_dagster/assets.py`
 
 ## ⏰ Automated Scheduling
 
@@ -391,7 +411,7 @@ In the Dagster UI (http://localhost:3000):
 
 - **Data Ingestion**: See `data_ingest/README.md`
 - **dbt Models**: See `dbt/README.md`
-- **Orchestration**: See `orchestration/wikipedia_dagster/`
+- **Orchestration**: See `orchestration/README.md`
 
 ## 🙏 Acknowledgments
 
